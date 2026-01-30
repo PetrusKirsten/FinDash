@@ -6,13 +6,13 @@ import streamlit as st
 from datetime import date
 
 from src.db import init_db
-from src.config import OWNER_LABELS, PAYER_LABELS
+from src.config import OWNER_LABELS, PAYER_LABELS, SPLIT_LABELS
 
-from src.services.seed          import seed_defaults
-from src.services.accounts      import list_accounts, create_account
-from src.services.categories    import list_categories, create_category, get_category_id_by_name
-from src.services.dashboards    import balances_by_account, total_balance
-from src.services.transactions  import (
+from src.services.seed import seed_defaults
+from src.services.dashboards import balances_by_account, total_balance
+from src.services.accounts import list_accounts, create_account
+from src.services.categories import list_categories, create_category, get_category_id_by_name
+from src.services.transactions import (
     create_transaction, update_transaction, delete_transaction,
     list_transactions, current_balance_for_account
 )
@@ -28,9 +28,21 @@ def brl(x: float) -> str:
     return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-st.title("📊 Finanças Pelissa")
+def fmt_owner(k: str) -> str:
+    return OWNER_LABELS.get(k, k)
 
+
+def fmt_payer(k: str) -> str:
+    return PAYER_LABELS.get(k, k)
+
+
+def fmt_split(k: str) -> str:
+    return SPLIT_LABELS.get(k, k)
+
+
+st.title("💵💲🏦📊 Finanças | Pelissa")
 page = st.sidebar.radio("Navegação", ["Dashboard", "Transações", "Config (Contas/Categorias)"])
+
 
 # -------- Dashboard --------
 if page == "Dashboard":
@@ -45,10 +57,12 @@ if page == "Dashboard":
         st.dataframe(bal_df[["account", "balance"]], use_container_width=True, hide_index=True)
 
     st.divider()
-
     st.subheader("Resumo por período")
+
     today = date.today()
     default_start = date(today.year, today.month, 1)
+
+    filter_labels = {"todos": "Todos"} | OWNER_LABELS
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -56,11 +70,18 @@ if page == "Dashboard":
     with c2:
         end = st.date_input("Fim", value=today)
     with c3:
-        owner = st.selectbox("Owner", ["todos", "petrus", "esposa", "ambos"], index=0)
+        owner_filter = st.selectbox(
+            "Owner",
+            options=list(filter_labels.keys()),
+            format_func=lambda k: filter_labels[k],
+            index=0,
+        )
 
-    tx_df = list_transactions(start=start, end=end, owner=owner)
+    tx_df = list_transactions(start=start, end=end, owner=owner_filter)
+
     if tx_df.empty:
         st.info("Sem transações no período.")
+
     else:
         income = tx_df.loc[tx_df["amount"] > 0, "amount"].sum()
         expense = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
@@ -80,12 +101,23 @@ if page == "Dashboard":
         )
         if by_cat.empty:
             st.caption("Sem gastos (excluindo transferências) no período.")
+
         else:
             by_cat["amount"] = by_cat["amount"].abs()
             st.dataframe(by_cat, use_container_width=True, hide_index=True)
 
         st.subheader("Transações (período)")
-        st.dataframe(tx_df.sort_values(["date", "id"], ascending=[False, False]), use_container_width=True, hide_index=True)
+        # mostra owner/payer/split com labels
+        show_df = tx_df.copy()
+        if "owner" in show_df.columns:
+            show_df["owner"] = show_df["owner"].map(fmt_owner)
+        if "paid_by" in show_df.columns:
+            show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
+        if "split_mode" in show_df.columns:
+            show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
+
+        st.dataframe(show_df.sort_values(["date", "id"], ascending=[False, False]),
+                     use_container_width=True, hide_index=True)
 
 
 # -------- Config --------
@@ -94,15 +126,22 @@ elif page == "Config (Contas/Categorias)":
     accs = list_accounts()
     if accs:
         df_acc = pd.DataFrame([a.model_dump() for a in accs])[["id", "name", "owner", "type", "initial_balance"]]
+        # labels no dataframe
+        df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))
         st.dataframe(df_acc, use_container_width=True, hide_index=True)
 
     with st.expander("Adicionar conta"):
         name = st.text_input("Nome da conta", value="")
-        owner = st.selectbox("Owner da conta", ["petrus", "esposa", "ambos"], index=0)
+        owner_id = st.selectbox(
+            "Owner da conta",
+            options=list(OWNER_LABELS.keys()),
+            format_func=fmt_owner,
+            index=0,
+        )
         typ = st.selectbox("Tipo", ["checking", "credit", "savings"], index=0)
         if st.button("Criar conta"):
             if name.strip():
-                create_account(name.strip(), owner, typ, 0.0)
+                create_account(name.strip(), owner_id, typ, 0.0)
                 st.success("Conta criada! Recarregue a página se necessário.")
             else:
                 st.error("Informe um nome.")
@@ -110,7 +149,6 @@ elif page == "Config (Contas/Categorias)":
     st.divider()
     st.subheader("Ajuste de saldo (Opção B)")
 
-    # Ajuste: cria uma transação delta pra bater com o saldo alvo
     if not accs:
         st.warning("Crie uma conta primeiro.")
         st.stop()
@@ -127,6 +165,7 @@ elif page == "Config (Contas/Categorias)":
     adj_cat_id = get_category_id_by_name("Ajuste de saldo")
     if adj_cat_id is None:
         st.error("Categoria 'Ajuste de saldo' não existe (seed falhou?).")
+
     else:
         if st.button("Criar ajuste"):
             delta = float(target) - float(current)
@@ -181,11 +220,10 @@ elif page == "Transações":
     c1, c2, c3 = st.columns(3)
     with c1:
         dt = st.date_input("Data", value=date.today())
-        owner = st.selectbox("Owner", ["petrus", "esposa", "ambos"], index=0)
+        owner_id = st.selectbox("Owner", options=list(OWNER_LABELS.keys()), format_func=fmt_owner, index=0)
     with c2:
-        paid_by = st.selectbox("Quem pagou?", ["petrus", "esposa"], index=0)
-        split_mode = st.selectbox("Divisão", ["none", "equal", "other_100"], index=0,
-                                  help="equal = 50/50 | other_100 = 100% do outro parceiro")
+        paid_by_id = st.selectbox("Quem pagou?", options=list(PAYER_LABELS.keys()), format_func=fmt_payer, index=0)
+        split_mode = st.selectbox("Divisão", options=list(SPLIT_LABELS.keys()), format_func=fmt_split, index=0)
     with c3:
         amount = st.number_input("Valor (positivo entrada, negativo gasto)", value=0.0, step=10.0)
         description = st.text_input("Descrição", value="")
@@ -205,8 +243,8 @@ elif page == "Transações":
             description=description.strip(),
             account_id=acc_map[acc_key],
             category_id=cat_map[cat_key],
-            owner=owner,
-            paid_by=paid_by,
+            owner=owner_id,
+            paid_by=paid_by_id,
             split_mode=split_mode,
             card_label=card_label.strip() or None,
         )
@@ -214,7 +252,6 @@ elif page == "Transações":
 
     st.divider()
 
-    # ---- Pagar fatura (gera 2 transações espelhadas) ----
     st.subheader("Pagar fatura (transferência espelhada)")
     with st.expander("Abrir pagamento de fatura"):
         cat_fatura_id = None
@@ -226,9 +263,8 @@ elif page == "Transações":
         if cat_fatura_id is None:
             st.error("Categoria 'Pgto. de fatura' não encontrada. Verifique a seed.")
         else:
-            # escolher conta origem (banco) e conta destino (cartão)
-            bank_accounts = [a for a in accs if a.type != "credit"]
-            credit_accounts = [a for a in accs if a.type == "credit"]
+            bank_accounts = [a for a in accs if a.type.value != "credit"]
+            credit_accounts = [a for a in accs if a.type.value == "credit"]
 
             if not bank_accounts or not credit_accounts:
                 st.warning("Você precisa ter pelo menos 1 conta banco e 1 conta crédito (ex: Santander Crédito).")
@@ -251,7 +287,6 @@ elif page == "Transações":
                         origem_id = int(origem.split("id=")[1].replace(")", ""))
                         destino_id = int(destino.split("id=")[1].replace(")", ""))
 
-                        # banco: saída
                         create_transaction(
                             dt=pdata,
                             amount=-float(valor),
@@ -263,7 +298,6 @@ elif page == "Transações":
                             split_mode="none",
                             card_label=None,
                         )
-                        # crédito: entrada (reduz dívida)
                         create_transaction(
                             dt=pdata,
                             amount=+float(valor),
@@ -280,20 +314,33 @@ elif page == "Transações":
     st.divider()
     st.subheader("Editar / Excluir transações")
 
+    filter_labels = {"todos": "Todos"} | OWNER_LABELS
+
     f1, f2, f3 = st.columns(3)
     with f1:
         start = st.date_input("Filtro início", value=date(date.today().year, date.today().month, 1), key="fstart")
     with f2:
         end = st.date_input("Filtro fim", value=date.today(), key="fend")
     with f3:
-        owner_filter = st.selectbox("Filtro owner", ["todos", "petrus", "esposa", "ambos"], index=0, key="fowner")
+        owner_filter = st.selectbox(
+            "Filtro owner",
+            options=list(filter_labels.keys()),
+            format_func=lambda k: filter_labels[k],
+            index=0,
+            key="fowner",
+        )
 
     df = list_transactions(start=start, end=end, owner=owner_filter)
     if df.empty:
         st.info("Nada por aqui nesse filtro.")
         st.stop()
 
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    show_df = df.copy()
+    show_df["owner"] = show_df["owner"].map(fmt_owner)
+    show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
+    show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
+
+    st.dataframe(show_df, use_container_width=True, hide_index=True)
 
     ids = df["id"].tolist()
     tx_id = st.selectbox("Selecione o ID para editar/excluir", ids)
@@ -304,16 +351,28 @@ elif page == "Transações":
     ec1, ec2, ec3 = st.columns(3)
     with ec1:
         edt_date = st.date_input("Data", value=row["date"], key="edt_date")
-        edt_owner = st.selectbox("Owner", ["petrus", "esposa", "ambos"],
-                                 index=["petrus", "esposa", "ambos"].index(row["owner"]),
-                                 key="edt_owner")
+        edt_owner = st.selectbox(
+            "Owner",
+            options=list(OWNER_LABELS.keys()),
+            format_func=fmt_owner,
+            index=list(OWNER_LABELS.keys()).index(row["owner"]),
+            key="edt_owner",
+        )
     with ec2:
-        edt_paid_by = st.selectbox("Quem pagou?", ["petrus", "esposa"],
-                                   index=["petrus", "esposa"].index(row["paid_by"]),
-                                   key="edt_paid_by")
-        edt_split = st.selectbox("Divisão", ["none", "equal", "other_100"],
-                                 index=["none", "equal", "other_100"].index(row["split_mode"]),
-                                 key="edt_split")
+        edt_paid_by = st.selectbox(
+            "Quem pagou?",
+            options=list(PAYER_LABELS.keys()),
+            format_func=fmt_payer,
+            index=list(PAYER_LABELS.keys()).index(row["paid_by"]),
+            key="edt_paid_by",
+        )
+        edt_split = st.selectbox(
+            "Divisão",
+            options=list(SPLIT_LABELS.keys()),
+            format_func=fmt_split,
+            index=list(SPLIT_LABELS.keys()).index(row["split_mode"]),
+            key="edt_split",
+        )
     with ec3:
         edt_amount = st.number_input("Valor", value=float(row["amount"]), step=10.0, key="edt_amount")
         edt_desc = st.text_input("Descrição", value=str(row["description"]), key="edt_desc")
@@ -326,13 +385,19 @@ elif page == "Transações":
 
     ec4, ec5 = st.columns(2)
     with ec4:
-        edt_acc = st.selectbox("Conta", acc_names,
-                               index=acc_names.index(curr_acc) if curr_acc in acc_names else 0,
-                               key="edt_acc")
+        edt_acc = st.selectbox(
+            "Conta",
+            acc_names,
+            index=acc_names.index(curr_acc) if curr_acc in acc_names else 0,
+            key="edt_acc",
+        )
     with ec5:
-        edt_cat = st.selectbox("Categoria", cat_names,
-                               index=cat_names.index(curr_cat) if curr_cat in cat_names else 0,
-                               key="edt_cat")
+        edt_cat = st.selectbox(
+            "Categoria",
+            cat_names,
+            index=cat_names.index(curr_cat) if curr_cat in cat_names else 0,
+            key="edt_cat",
+        )
 
     edt_card = st.text_input("Card label (opcional)", value=str(row["card_label"]), key="edt_card")
 
@@ -341,6 +406,7 @@ elif page == "Transações":
         if st.button("Atualizar"):
             acc_id = next(a.id for a in accs if a.name == edt_acc)
             cat_id = next(c.id for c in cats if f"{c.type} | {c.name}" == edt_cat)
+
             update_transaction(
                 int(tx_id),
                 date=edt_date,

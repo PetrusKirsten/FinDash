@@ -5,9 +5,9 @@ from src.db import get_session
 from src.models import Account, Category
 
 DEFAULT_ACCOUNTS = [
-    ("BB Petrus", "petrus", "checking", 0.0),
-    ("Santander Petrus", "petrus", "checking", 0.0),
-    ("Santander Crédito", "petrus", "credit", 0.0),
+    ("BB | PP", "petrus", "checking", 0.0),
+    ("Santander | PP", "petrus", "checking", 0.0),
+    ("Santander | Crédito", "petrus", "credit", 0.0),
 ]
 
 # categorias exatamente como na planilha + "Ajuste de saldo"

@@ -1,17 +1,19 @@
+# IDs internos fixos: petrus, partner, both
+# Labels exibidas: você personaliza aqui
+
 OWNER_LABELS = {
-    "petrus" : "Petrus",
+    "petrus": "Petrus",
     "partner": "Melissa",
-    "both"   : "Ambos",
+    "both": "Ambos",
 }
 
 PAYER_LABELS = {
-    "petrus" : "Petrus",
+    "petrus": "Petrus",
     "partner": "Melissa",
 }
 
-def owner_options():
-    # lista de tuplas (id, label)
-    return [(k, v) for k, v in OWNER_LABELS.items()]
-
-def payer_options():
-    return [(k, v) for k, v in PAYER_LABELS.items()]
+SPLIT_LABELS = {
+    "none": "Não dividir",
+    "equal": "Dividir 50/50",
+    "other_100": "100% do outro",
+}
