@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import date
 
 from src.db import init_db
-from src.config import OWNER_LABELS, PAYER_LABELS, SPLIT_LABELS
+from src.config import COL_LABELS, PAGE_LABELS, OWNER_LABELS, PAYER_LABELS, SPLIT_LABELS
 
 from src.services.seed import seed_defaults
 from src.services.dashboards import balances_by_account, total_balance
@@ -18,12 +18,13 @@ from src.services.transactions import (
 )
 
 
-st.set_page_config(page_title="Finanças | Dashboard", layout="wide")
+st.set_page_config(page_title=PAGE_LABELS["title"], layout="wide")
 
-init_db()
-seed_defaults()
+# init_db()
+# seed_defaults()
 
 
+# -------- Funções auxiliares --------
 def brl(x: float) -> str:
     return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -40,12 +41,26 @@ def fmt_split(k: str) -> str:
     return SPLIT_LABELS.get(k, k)
 
 
-st.title("💵💲🏦📊 Finanças | Pelissa")
-page = st.sidebar.radio("Navegação", ["Dashboard", "Transações", "Config (Contas/Categorias)"])
+def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | None = None) -> pd.DataFrame:
+    out = df.copy()
+    if hide:
+        cols_to_drop = [c for c in hide if c in out.columns]
+        out = out.drop(columns=cols_to_drop)
+    if rename:
+        out = out.rename(columns={k: v for k, v in rename.items() if k in out.columns})
+
+    return out
+
+
+st.title(PAGE_LABELS["title"])
+page = st.sidebar.radio(
+    PAGE_LABELS["nav"], 
+    [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]]
+)
 
 
 # -------- Dashboard --------
-if page == "Dashboard":
+if page == PAGE_LABELS["dash"]:
     col1, col2 = st.columns(2)
     with col1:
         st.metric("Saldo total (todas as contas)", brl(total_balance()))
@@ -54,7 +69,11 @@ if page == "Dashboard":
 
     bal_df = balances_by_account()
     if not bal_df.empty:
-        st.dataframe(bal_df[["account", "balance"]], use_container_width=True, hide_index=True)
+        saldo_ui = format_df(
+            bal_df[["account", "balance"]],
+            rename=COL_LABELS,
+        )
+        st.dataframe(saldo_ui, width='stretch', hide_index=True)
 
     st.divider()
     st.subheader("Resumo por período")
@@ -104,7 +123,7 @@ if page == "Dashboard":
 
         else:
             by_cat["amount"] = by_cat["amount"].abs()
-            st.dataframe(by_cat, use_container_width=True, hide_index=True)
+            st.dataframe(by_cat, width='stretch', hide_index=True)
 
         st.subheader("Transações (período)")
         # mostra owner/payer/split com labels
@@ -116,96 +135,16 @@ if page == "Dashboard":
         if "split_mode" in show_df.columns:
             show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-        st.dataframe(show_df.sort_values(["date", "id"], ascending=[False, False]),
-                     use_container_width=True, hide_index=True)
-
-
-# -------- Config --------
-elif page == "Config (Contas/Categorias)":
-    st.subheader("Contas")
-    accs = list_accounts()
-    if accs:
-        df_acc = pd.DataFrame([a.model_dump() for a in accs])[["id", "name", "owner", "type", "initial_balance"]]
-        # labels no dataframe
-        df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))
-        st.dataframe(df_acc, use_container_width=True, hide_index=True)
-
-    with st.expander("Adicionar conta"):
-        name = st.text_input("Nome da conta", value="")
-        owner_id = st.selectbox(
-            "Owner da conta",
-            options=list(OWNER_LABELS.keys()),
-            format_func=fmt_owner,
-            index=0,
+        tx_ui = format_df(
+            show_df,
+            rename=COL_LABELS,
+            hide=["account_id", "category_id"],  # se existirem
         )
-        typ = st.selectbox("Tipo", ["checking", "credit", "savings"], index=0)
-        if st.button("Criar conta"):
-            if name.strip():
-                create_account(name.strip(), owner_id, typ, 0.0)
-                st.success("Conta criada! Recarregue a página se necessário.")
-            else:
-                st.error("Informe um nome.")
-
-    st.divider()
-    st.subheader("Ajuste de saldo (Opção B)")
-
-    if not accs:
-        st.warning("Crie uma conta primeiro.")
-        st.stop()
-
-    acc_label_to_id = {f"{a.name} (id={a.id})": a.id for a in accs}
-    acc_choice = st.selectbox("Conta para ajustar", list(acc_label_to_id.keys()))
-    acc_id = acc_label_to_id[acc_choice]
-    current = current_balance_for_account(acc_id)
-
-    st.caption(f"Saldo calculado atual dessa conta: **{brl(current)}**")
-
-    target = st.number_input("Qual saldo você quer que essa conta fique AGORA?", value=float(current), step=50.0)
-
-    adj_cat_id = get_category_id_by_name("Ajuste de saldo")
-    if adj_cat_id is None:
-        st.error("Categoria 'Ajuste de saldo' não existe (seed falhou?).")
-
-    else:
-        if st.button("Criar ajuste"):
-            delta = float(target) - float(current)
-            if abs(delta) < 0.00001:
-                st.info("Já está batendo. Nenhum ajuste necessário.")
-            else:
-                create_transaction(
-                    dt=date.today(),
-                    amount=delta,
-                    description=f"Ajuste de saldo para {brl(target)}",
-                    account_id=acc_id,
-                    category_id=adj_cat_id,
-                    owner="petrus",
-                    paid_by="petrus",
-                    split_mode="none",
-                    card_label=None,
-                )
-                st.success(f"Ajuste criado: {brl(delta)}")
-
-    st.divider()
-    st.subheader("Categorias")
-
-    cats = list_categories()
-    if cats:
-        st.dataframe(pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]],
-                     use_container_width=True, hide_index=True)
-
-    with st.expander("Adicionar categoria"):
-        cname = st.text_input("Nome da categoria", value="")
-        ctype = st.selectbox("Tipo da categoria", ["income", "expense", "investment", "transfer"], index=1)
-        if st.button("Criar categoria"):
-            if cname.strip():
-                create_category(cname.strip(), ctype)
-                st.success("Categoria criada! Recarregue a página se necessário.")
-            else:
-                st.error("Informe um nome.")
+        st.dataframe(tx_ui, width='stretch', hide_index=True)
 
 
 # -------- Transações --------
-elif page == "Transações":
+elif page == PAGE_LABELS["trans"]:
     st.subheader("Lançar transação")
     accs = list_accounts()
     cats = list_categories()
@@ -214,15 +153,15 @@ elif page == "Transações":
         st.warning("Crie ao menos 1 conta e 1 categoria na aba Config.")
         st.stop()
 
-    acc_map = {f"{a.name} (id={a.id})": a.id for a in accs}
-    cat_map = {f"{c.type} | {c.name} (id={c.id})": c.id for c in cats}
+    acc_map = {f"{a.name}": a.id for a in accs}
+    cat_map = {f"{c.name}": c.id for c in cats}
 
     c1, c2, c3 = st.columns(3)
     with c1:
         dt = st.date_input("Data", value=date.today())
-        owner_id = st.selectbox("Owner", options=list(OWNER_LABELS.keys()), format_func=fmt_owner, index=0)
+        owner_id = st.selectbox("De quem é", options=list(OWNER_LABELS.keys()), format_func=fmt_owner, index=0)
     with c2:
-        paid_by_id = st.selectbox("Quem pagou?", options=list(PAYER_LABELS.keys()), format_func=fmt_payer, index=0)
+        paid_by_id = st.selectbox("Quem pagou", options=list(PAYER_LABELS.keys()), format_func=fmt_payer, index=0)
         split_mode = st.selectbox("Divisão", options=list(SPLIT_LABELS.keys()), format_func=fmt_split, index=0)
     with c3:
         amount = st.number_input("Valor (positivo entrada, negativo gasto)", value=0.0, step=10.0)
@@ -234,7 +173,7 @@ elif page == "Transações":
     with c5:
         cat_key = st.selectbox("Categoria", list(cat_map.keys()))
 
-    card_label = st.text_input("Card label (opcional p/ crédito, ex: Final 9124)", value="")
+    card_label = st.text_input("Final do Cartão", value="")
 
     if st.button("Salvar transação"):
         create_transaction(
@@ -340,7 +279,13 @@ elif page == "Transações":
     show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
     show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-    st.dataframe(show_df, use_container_width=True, hide_index=True)
+    tx_list_ui = format_df(
+        show_df,
+        rename=COL_LABELS,
+        hide=["account_id", "category_id"],  # e o que mais te incomodar
+    )
+    st.dataframe(tx_list_ui, width='stretch', hide_index=True)
+
 
     ids = df["id"].tolist()
     tx_id = st.selectbox("Selecione o ID para editar/excluir", ids)
@@ -425,3 +370,101 @@ elif page == "Transações":
         if st.button("Excluir"):
             delete_transaction(int(tx_id))
             st.warning("Excluído!")
+
+
+# -------- Config --------
+elif page == PAGE_LABELS["config"]:
+    
+    # -------- Contas --------
+    st.subheader("Contas")
+    accs = list_accounts()
+    if accs:
+        df_acc = pd.DataFrame([a.model_dump() for a in accs])[["id", "name", "owner", "type", "initial_balance"]]
+        df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))        
+        COL_ACC_PT = {
+            "id": "ID",
+            "name": "Conta",
+            "owner": "Owner",
+            "type": "Tipo",
+            "initial_balance": "Saldo inicial",
+        }
+        st.dataframe(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width='stretch', hide_index=True)
+
+    with st.expander("Adicionar conta"):
+        name = st.text_input("Nome da conta", value="")
+        owner_id = st.selectbox(
+            "Owner da conta",
+            options=list(OWNER_LABELS.keys()),
+            format_func=fmt_owner,
+            index=0,
+        )
+        typ = st.selectbox("Tipo", ["checking", "credit", "savings"], index=0)
+        if st.button("Criar conta"):
+            if name.strip():
+                create_account(name.strip(), owner_id, typ, 0.0)
+                st.success("Conta criada! Recarregue a página se necessário.")
+            else:
+                st.error("Informe um nome.")
+
+    st.divider()
+
+    # -------- Ajuste de saldo --------
+    st.subheader("Ajuste de saldo")
+
+    if not accs:
+        st.warning("Crie uma conta primeiro.")
+        st.stop()
+
+    acc_label_to_id = {f"{a.name}": a.id for a in accs}
+    acc_choice = st.selectbox("Conta para ajustar", list(acc_label_to_id.keys()))
+    acc_id = acc_label_to_id[acc_choice]
+    current = current_balance_for_account(acc_id)
+
+    st.caption(f"Saldo calculado atual dessa conta: **{brl(current)}**")
+
+    target = st.number_input("Qual saldo você quer que essa conta fique AGORA?", value=float(current), step=50.0)
+
+    adj_cat_id = get_category_id_by_name("Ajuste de saldo")
+    if adj_cat_id is None:
+        st.error("Categoria 'Ajuste de saldo' não existe (seed falhou?).")
+
+    else:
+        if st.button("Criar ajuste"):
+            delta = float(target) - float(current)
+            if abs(delta) < 0.00001:
+                st.info("Já está batendo. Nenhum ajuste necessário.")
+            else:
+                create_transaction(
+                    dt=date.today(),
+                    amount=delta,
+                    description=f"Ajuste de saldo para {brl(target)}",
+                    account_id=acc_id,
+                    category_id=adj_cat_id,
+                    owner="petrus",
+                    paid_by="petrus",
+                    split_mode="none",
+                    card_label=None,
+                )
+                st.success(f"Ajuste criado: {brl(delta)}")
+
+    st.divider()
+
+    # -------- Categorias --------
+    st.subheader("Categorias")
+
+    cats = list_categories()
+    if cats:
+        df_cat = pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]]
+        COL_CAT_PT = {"id": "ID", "name": "Categoria", "type": "Tipo"}
+        st.dataframe(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width='stretch', hide_index=True)
+
+
+    with st.expander("Adicionar categoria"):
+        cname = st.text_input("Nome da categoria", value="")
+        ctype = st.selectbox("Tipo da categoria", ["income", "expense", "investment", "transfer"], index=1)
+        if st.button("Criar categoria"):
+            if cname.strip():
+                create_category(cname.strip(), ctype)
+                st.success("Categoria criada! Recarregue a página se necessário.")
+            else:
+                st.error("Informe um nome.")
