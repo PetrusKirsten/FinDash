@@ -5,25 +5,25 @@ from src.db import get_session
 from src.models import Account, Category
 
 DEFAULT_ACCOUNTS = [
-    ("BB | PP", "petrus", "checking", 0.0),
-    ("Santander | PP", "petrus", "checking", 0.0),
-    ("Santander | Crédito", "petrus", "credit", 0.0),
+    ("BB | PP",             "petrus", "checking",  0.0),
+    ("Santander | PP",      "petrus", "checking",  0.0),
+    ("Santander | Crédito", "petrus", "credit",    0.0),
 ]
 
 # categorias exatamente como na planilha + "Ajuste de saldo"
 DEFAULT_CATEGORIES = [
-    ("Alimentação", "expense"),
-    ("Juros", "income"),
-    ("Moradia", "expense"),
-    ("Outros", "expense"),
-    ("Pagamento", "income"),
-    ("Pessoal", "expense"),
-    ("Pgto. de fatura", "transfer"),
-    ("Transporte", "expense"),
-    ("Casamento", "expense"),
-    ("Presentes", "expense"),
-    ("Ratos", "expense"),
-    ("Ajuste de saldo", "transfer"),
+    ("Alimentação 🍽️",     "expense"),
+    ("Juros 📈",           "income"),
+    ("Moradia 🏠",         "expense"),
+    ("Outros 📦",          "expense"),
+    ("Pagamento 💵",       "income"),
+    ("Pessoal 👤",         "expense"),
+    ("Pgto. de fatura 💳", "transfer"),
+    ("Transporte 🚗",      "expense"),
+    ("Casamento 💍",       "expense"),
+    ("Presentes 🎁",       "expense"),
+    ("Ratos 🐀",           "expense"),
+    ("Ajuste de saldo ⚖️", "transfer"),
 ]
 
 def seed_defaults() -> None:

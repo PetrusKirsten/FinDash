@@ -19,10 +19,10 @@ COL_LABELS = {
 
 PAGE_LABELS = {
     "title":  "💵💲🏦📊 Finanças | Pelissa",
-    "nav":    "Navegação",
-    "dash":   "Início",
-    "trans":  "Transações",
-    "config": "Configs",
+    "nav":    "☰ Navegação",
+    "dash":   "🏠 Início",
+    "trans":  "📊 Transações",
+    "config": "⚙️ Configs",
 }
 
 OWNER_LABELS = {
