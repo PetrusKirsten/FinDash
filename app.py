@@ -6,23 +6,38 @@ import streamlit as st
 from datetime import date
 
 from src.db import init_db
-from src.config import COL_LABELS, PAGE_LABELS, OWNER_LABELS, TIPO_LABELS, PAYER_LABELS, SPLIT_LABELS
+from src.config import (
+    COL_LABELS,
+    PAGE_LABELS,
+    OWNER_LABELS,
+    TIPO_LABELS,
+    CREDIT_LABELS,
+    PAYER_LABELS,
+    SPLIT_LABELS
+)
 
 from src.services.seed import seed_defaults
-from src.services.dashboards import balances_by_account, total_balance
+from src.services.dashboards import (
+    balances_by_account,
+    cash_total_balance,
+    credit_outstanding_by_account,
+    total_credit_outstanding,
+)
+
 from src.services.accounts import list_accounts, create_account
 from src.services.categories import list_categories, create_category, get_category_id_by_name
 from src.services.transactions import (
-    create_transaction, update_transaction, delete_transaction,
-    list_transactions, current_balance_for_account
+    create_transaction,
+    update_transaction,
+    delete_transaction,
+    list_transactions,
+    current_balance_for_account
 )
-
 
 st.set_page_config(page_title=PAGE_LABELS["title"], layout="wide")
 
 init_db()
 seed_defaults()
-
 
 # -------- Funções auxiliares --------
 def brl(x: float) -> str:
@@ -48,38 +63,59 @@ def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | No
         out = out.drop(columns=cols_to_drop)
     if rename:
         out = out.rename(columns={k: v for k, v in rename.items() if k in out.columns})
-
     return out
 
 
 st.title(PAGE_LABELS["title"])
 page = st.sidebar.radio(
-    PAGE_LABELS["nav"], 
+    PAGE_LABELS["nav"],
     [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]]
 )
-
 
 # -------- Dashboard --------
 if page == PAGE_LABELS["dash"]:
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Saldo total", brl(total_balance()))
+    # =========================
+    # Caixa (sem cartão)
+    # =========================
+    st.subheader("Caixa")
 
-    bal_df = balances_by_account()
+    st.metric("Saldo total", brl(cash_total_balance()))
+    st.caption("Saldos por conta")
+
+    bal_df = balances_by_account(include_credit=False)
     if not bal_df.empty:
-        st.caption("Saldo por conta")
-
         saldo_ui = format_df(
             bal_df[["account", "balance"]],
             rename=COL_LABELS,
         )
-        st.dataframe(saldo_ui, width='stretch', hide_index=True)
-    # ------------------------
-
+        st.dataframe(saldo_ui, width="stretch", hide_index=True)
+    else:
+        st.info("Nenhuma conta de caixa encontrada (conta corrente/poupança).")
+   
+    # =========================
     st.divider()
+    # =========================
 
-    # ------------------------
+    # =========================
+    # Cartões (fatura)
+    # =========================
+    st.subheader("Cartões (fatura)")
+
+    st.metric("Total em aberto", brl(total_credit_outstanding()))
+
+    credit_df = credit_outstanding_by_account()
+    if credit_df.empty:
+        st.info("Nenhuma conta de crédito cadastrada.")
+    else:
+        credit_ui = format_df(credit_df, hide=['balance'], rename=CREDIT_LABELS)
+        st.dataframe(credit_ui, width="stretch", hide_index=True)
+    
+    # =========================
+    st.divider()
+    # =========================
+    # Resumo por período
+    # =========================
     st.subheader("Resumo por período")
 
     today = date.today()
@@ -104,7 +140,6 @@ if page == PAGE_LABELS["dash"]:
 
     if tx_df.empty:
         st.info("Sem transações no período.")
-
     else:
         income = tx_df.loc[tx_df["amount"] > 0, "amount"].sum()
         expense = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
@@ -114,8 +149,6 @@ if page == PAGE_LABELS["dash"]:
         a.metric("Entradas", brl(float(income)))
         b.metric("Saídas", brl(float(abs(expense))))
         c.metric("Saldo do período", brl(float(saldo)))
-        
-        # ------------------------
 
         st.subheader("Gastos por categoria no período")
         by_cat = (
@@ -126,20 +159,16 @@ if page == PAGE_LABELS["dash"]:
         )
         if by_cat.empty:
             st.caption("Sem gastos (excluindo transferências) no período.")
-
         else:
             by_cat["amount"] = by_cat["amount"].abs()
             by_cat_ui = format_df(
                 by_cat,
                 rename=COL_LABELS,
-                hide=["account_id",],  # se existirem
+                hide=["account_id"],
             )
-            st.dataframe(by_cat_ui, width='stretch', hide_index=True)
-
-        # ------------------------
+            st.dataframe(by_cat_ui, width="stretch", hide_index=True)
 
         st.subheader("Transações no período")
-        # mostra owner/payer/split com labels
         show_df = tx_df.copy()
         if "owner" in show_df.columns:
             show_df["owner"] = show_df["owner"].map(fmt_owner)
@@ -151,10 +180,9 @@ if page == PAGE_LABELS["dash"]:
         tx_ui = format_df(
             show_df,
             rename=COL_LABELS,
-            hide=["account_id", "category_id", "account_type", "category_type"],  # se existirem
+            hide=["account_id", "category_id", "account_type", "category_type"],
         )
-        st.dataframe(tx_ui, width='stretch', hide_index=True)
-
+        st.dataframe(tx_ui, width="stretch", hide_index=True)
 
 # -------- Transações --------
 elif page == PAGE_LABELS["trans"]:
@@ -204,9 +232,7 @@ elif page == PAGE_LABELS["trans"]:
         st.session_state["new_desc"] = ""
         st.session_state["new_card"] = ""
 
-    # =========================
     # Linha 1: Tipo (sozinho)
-    # =========================
     tipo_ui = st.radio(
         "Tipo",
         options=["Despesa", "Entrada", "Transferência"],
@@ -215,18 +241,14 @@ elif page == PAGE_LABELS["trans"]:
         key="new_tipo",
     )
 
-    # =========================
     # Linha 2: Data e Valor
-    # =========================
     r2c1, r2c2 = st.columns(2)
     with r2c1:
         dt = st.date_input("Data", value=date.today(), key="new_dt")
     with r2c2:
         valor = st.number_input("Valor", min_value=0.0, step=10.0, key="new_valor")
 
-    # =========================
     # Linha 3: Descrição, Categoria, Final do cartão
-    # =========================
     r3c1, r3c2, r3c3 = st.columns([3, 2, 1])
 
     with r3c1:
@@ -263,9 +285,7 @@ elif page == PAGE_LABELS["trans"]:
             disabled=not card_enabled,
         )
 
-    # =========================
     # Linha 4: Conta, De quem é, Quem pagou, Divisão (iguais)
-    # =========================
     r4c1, r4c2, r4c3, r4c4 = st.columns(4)
 
     with r4c1:
@@ -300,9 +320,7 @@ elif page == PAGE_LABELS["trans"]:
             key="new_split",
         )
 
-    # =========================
     # Botões (Salvar esq, Limpar dir)
-    # =========================
     b1, b2, b3 = st.columns([1, 3, 1])
     with b1:
         save = st.button("Lançar transação", type="primary")
@@ -389,7 +407,7 @@ elif page == PAGE_LABELS["trans"]:
 
                         create_transaction(
                             dt=pdata,
-                            amount=-float(valor),
+                            amount=-round(float(valor), 2),
                             description=desc,
                             account_id=origem_id,
                             category_id=cat_fatura_id,
@@ -400,7 +418,7 @@ elif page == PAGE_LABELS["trans"]:
                         )
                         create_transaction(
                             dt=pdata,
-                            amount=+float(valor),
+                            amount=+round(float(valor), 2),
                             description=desc,
                             account_id=destino_id,
                             category_id=cat_fatura_id,
@@ -411,7 +429,7 @@ elif page == PAGE_LABELS["trans"]:
                         )
                         st.success("Pagamento gerado (banco -X, crédito +X).")
     # ----------------------------------
-    
+
     st.divider()
 
     # -------- Editar transações --------
@@ -438,7 +456,6 @@ elif page == PAGE_LABELS["trans"]:
             st.info("Nada por aqui nesse filtro.")
             st.stop()
 
-        # tabela bonitinha (UI)
         show_df = df.copy()
         show_df["owner"] = show_df["owner"].map(fmt_owner)
         show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
@@ -451,13 +468,12 @@ elif page == PAGE_LABELS["trans"]:
         )
         st.dataframe(tx_list_ui, width="stretch", hide_index=True)
 
-        # ---- Seleção prática (label rico) ----
         df_label = df.copy()
         df_label["label"] = (
-            "ID " + df_label["id"].astype(str)                + " | "
-            + df_label["date"].astype(str)                    + " | " 
-            + df_label["amount"].map(lambda x: brl(float(x))) + " | " 
-            + df_label["category"].astype(str)                + " | " 
+            "ID " + df_label["id"].astype(str) + " | "
+            + df_label["date"].astype(str) + " | "
+            + df_label["amount"].map(lambda x: brl(float(x))) + " | "
+            + df_label["category"].astype(str) + " | "
             + df_label["description"].astype(str).str.slice(0, 40)
         )
 
@@ -469,14 +485,12 @@ elif page == PAGE_LABELS["trans"]:
 
         tx_id = int(selected_label.split("ID ")[1].split(" |")[0])
 
-        # ---- Sincronizar form quando tx_id muda ----
         if "last_selected_tx_id" not in st.session_state:
             st.session_state.last_selected_tx_id = None
 
         if st.session_state.last_selected_tx_id != tx_id:
             row = df[df["id"] == tx_id].iloc[0]
 
-            # popula os widgets (a partir da linha selecionada)
             st.session_state.edt_date = row["date"]
             st.session_state.edt_owner = row["owner"]
             st.session_state.edt_paid_by = row["paid_by"]
@@ -485,14 +499,13 @@ elif page == PAGE_LABELS["trans"]:
             st.session_state.edt_desc = str(row["description"])
 
             st.session_state.edt_acc = row["account"]
-            st.session_state.edt_cat = str(row["category"])  # aqui é só o nome
+            st.session_state.edt_cat = str(row["category"])
             st.session_state.edt_card = str(row["card_label"])
 
             st.session_state.last_selected_tx_id = tx_id
         else:
             row = df[df["id"] == tx_id].iloc[0]
 
-        # ---- Form de edição (controlado por session_state) ----
         st.markdown("### Editar")
 
         acc_names = [a.name for a in accs]
@@ -502,10 +515,6 @@ elif page == PAGE_LABELS["trans"]:
             acc = next((a for a in accs if a.name == account_name), None)
             return bool(acc and acc.type.value == "credit")
 
-        # Inferir "Tipo" (só UI)
-        # - se category for transfer -> Transferência
-        # - senão se amount < 0 -> Despesa
-        # - senão -> Entrada
         row_amount = float(row["amount"])
         row_cat_type = row.get("category_type", "")
         if row_cat_type == "transfer":
@@ -515,7 +524,6 @@ elif page == PAGE_LABELS["trans"]:
         else:
             tipo_edit_ui = "Entrada"
 
-        # Linha 1: Tipo (somente leitura)
         st.radio(
             "Tipo",
             options=["Despesa", "Entrada", "Transferência"],
@@ -524,21 +532,18 @@ elif page == PAGE_LABELS["trans"]:
             disabled=True,
         )
 
-        # Linha 2: Data e Valor
         er2c1, er2c2 = st.columns(2)
         with er2c1:
             edt_date = st.date_input("Data", key="edt_date")
         with er2c2:
             edt_amount = st.number_input("Valor", step=10.0, key="edt_amount")
 
-        # Linha 3: Descrição, Categoria, Final do cartão
         er3c1, er3c2, er3c3 = st.columns([3, 2, 1])
         with er3c1:
             edt_desc = st.text_input("Descrição", key="edt_desc")
         with er3c2:
             edt_cat = st.selectbox("Categoria", cat_names, key="edt_cat")
         with er3c3:
-            # habilita só se conta for crédito
             selected_acc_name = st.session_state.get("edt_acc", row["account"])
             card_enabled = is_credit_account_edit(selected_acc_name)
 
@@ -549,7 +554,6 @@ elif page == PAGE_LABELS["trans"]:
                 help="Opcional (ex: 9124).",
             )
 
-        # Linha 4: Conta, De quem é, Quem pagou, Divisão (iguais)
         er4c1, er4c2, er4c3, er4c4 = st.columns(4)
         with er4c1:
             edt_acc = st.selectbox("Conta", acc_names, key="edt_acc")
@@ -575,7 +579,6 @@ elif page == PAGE_LABELS["trans"]:
                 key="edt_split",
             )
 
-        # Botões (Atualizar esq, Excluir dir)
         b1, b2, b3 = st.columns([1, 3, 1])
         with b1:
             do_update = st.button("Atualizar", type="primary")
@@ -585,7 +588,6 @@ elif page == PAGE_LABELS["trans"]:
         if do_update:
             acc_id = next(a.id for a in accs if a.name == edt_acc)
             cat_id = next(c.id for c in cats if c.name == edt_cat)
-
             card_to_save = (str(edt_card).strip() or None) if is_credit_account_edit(edt_acc) else None
 
             update_transaction(
@@ -610,29 +612,27 @@ elif page == PAGE_LABELS["trans"]:
             st.session_state.last_selected_tx_id = None
             st.rerun()
 
-
 # -------- Config --------
 elif page == PAGE_LABELS["config"]:
-    
-    # -------- Contas --------
+
     st.subheader("Contas")
     accs = list_accounts()
     if accs:
         df_acc = pd.DataFrame([a.model_dump() for a in accs])[["id", "name", "owner", "type", "initial_balance"]]
-        df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))        
+        df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))
         COL_ACC_PT = {
-            "id": "ID",
-            "name": "Conta",
-            "owner": "Owner",
-            "type": "Tipo",
-            "initial_balance": "Saldo inicial",
+            "id":              "ID",
+            "name":            "Conta",
+            "owner":           "Owner",
+            "type":            "Tipo",
+            "initial_balance": "Saldo inicial (R$)",
         }
-        st.dataframe(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width='stretch', hide_index=True)
+        st.dataframe(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width="stretch", hide_index=True)
 
     with st.expander("Adicionar conta"):
         name = st.text_input("Nome da conta", value="")
         owner_id = st.selectbox(
-            "Owner da conta",
+            "Dono da conta",
             options=list(OWNER_LABELS.keys()),
             format_func=fmt_owner,
             index=0,
@@ -645,9 +645,10 @@ elif page == PAGE_LABELS["config"]:
             else:
                 st.error("Informe um nome.")
 
+    # =========================
     st.divider()
+    # =========================
 
-    # -------- Ajuste de saldo --------
     st.subheader("Ajuste de saldo")
 
     if not accs:
@@ -666,7 +667,6 @@ elif page == PAGE_LABELS["config"]:
     adj_cat_id = get_category_id_by_name("Ajuste de saldo ⚖️")
     if adj_cat_id is None:
         st.error("Categoria 'Ajuste de saldo' não existe (seed falhou?).")
-
     else:
         if st.button("Criar ajuste"):
             delta = float(target) - float(current)
@@ -675,7 +675,7 @@ elif page == PAGE_LABELS["config"]:
             else:
                 create_transaction(
                     dt=date.today(),
-                    amount=delta,
+                    amount=round(delta, 2),
                     description=f"Ajuste de saldo para {brl(target)}",
                     account_id=acc_id,
                     category_id=adj_cat_id,
@@ -688,16 +688,14 @@ elif page == PAGE_LABELS["config"]:
 
     st.divider()
 
-    # -------- Categorias --------
     st.subheader("Categorias")
 
     cats = list_categories()
     if cats:
         df_cat = pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]]
         COL_CAT_PT = {"id": "ID", "name": "Categoria", "type": "Tipo"}
-        st.dataframe(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width='stretch', hide_index=True)
+        st.dataframe(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width="stretch", hide_index=True)
 
-    # -------- Adicionar categoria --------
     with st.expander("Adicionar categoria"):
         cname = st.text_input("Nome da categoria", value="")
         ctype = st.selectbox("Tipo da categoria", ["income", "expense", "investment", "transfer"], index=1)

@@ -26,24 +26,31 @@ PAGE_LABELS = {
 }
 
 OWNER_LABELS = {
-    "petrus": "Petrus",
+    "petrus":  "Petrus",
     "partner": "Melissa",
-    "both": "Ambos",
+    "both":    "Ambos",
 }
 
 TIPO_LABELS = {
-        "Despesa": "expense",
-        "Entrada": "income",
-        "Transferência": "transfer",
-    }
+    "Despesa":       "expense",
+    "Entrada":       "income",
+    "Transferência": "transfer",
+}
+
+CREDIT_LABELS = {
+    "account":   "Cartão",
+    "em_aberto": "Fatura (R$)",
+    "a_favor":   "A favor (R$)",
+    # "balance": "Saldo (debug)",  # se quiser mostrar, descomente no dashboards.py e aqui
+}
 
 PAYER_LABELS = {
-    "petrus": "Petrus",
+    "petrus":  "Petrus",
     "partner": "Melissa",
 }
 
 SPLIT_LABELS = {
-    "none": "Não dividir",
-    "equal": "Dividir 50/50",
+    "none":      "Não dividir",
+    "equal":     "Dividir 50/50",
     "other_100": "100% do outro",
 }
