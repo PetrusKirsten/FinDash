@@ -26,9 +26,9 @@ PAGE_LABELS = {
 }
 
 OWNER_LABELS = {
-    "petrus":  "Petrus",
-    "partner": "Melissa",
-    "both":    "Ambos",
+    "petrus":  "Petrus 🧙🏻‍♂️",
+    "partner": "Melissa 🐝",
+    "both":    "Ambos 👫",
 }
 
 TIPO_LABELS = {

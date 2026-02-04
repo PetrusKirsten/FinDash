@@ -34,10 +34,17 @@ from src.services.transactions import (
     current_balance_for_account
 )
 
+
+@st.cache_resource
+def bootstrap():
+    init_db()
+    seed_defaults()
+
+bootstrap()
+
+
 st.set_page_config(page_title=PAGE_LABELS["title"], layout="wide")
 
-init_db()
-seed_defaults()
 
 # -------- Funções auxiliares --------
 def brl(x: float) -> str:
@@ -66,7 +73,7 @@ def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | No
     return out
 
 
-st.title(PAGE_LABELS["title"])
+st.header(PAGE_LABELS["title"])
 page = st.sidebar.radio(
     PAGE_LABELS["nav"],
     [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]]
@@ -100,9 +107,9 @@ if page == PAGE_LABELS["dash"]:
     # =========================
     # Cartões (fatura)
     # =========================
-    st.subheader("Cartões (fatura)")
+    st.subheader("Cartões de crédito")
 
-    st.metric("Total em aberto", brl(total_credit_outstanding()))
+    st.metric("Total das faturas", brl(total_credit_outstanding()))
 
     credit_df = credit_outstanding_by_account()
     if credit_df.empty:
@@ -114,9 +121,11 @@ if page == PAGE_LABELS["dash"]:
     # =========================
     st.divider()
     # =========================
+
+    # =========================
     # Resumo por período
     # =========================
-    st.subheader("Resumo por período")
+    st.subheader("Resumo no período")
 
     today = date.today()
     default_start = date(today.year, today.month, 1)
