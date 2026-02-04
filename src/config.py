@@ -3,14 +3,14 @@
 
 COL_LABELS = {
     "account":       "Conta",
-    "balance":       "Saldo",
+    "balance":       "Saldo (R$)",
     "date":          "Data",
-    "amount":        "Valor",
+    "amount":        "Valor (R$)",
     "description":   "Descrição",
     "category":      "Categoria",
     "category_type": "Tipo da categoria",
     "account_type":  "Tipo da conta",
-    "owner":         "De quem?",
+    "owner":         "De quem é",
     "paid_by":       "Quem pagou",
     "split_mode":    "Divisão",
     "card_label":    "Cartão (Final)",
@@ -30,6 +30,12 @@ OWNER_LABELS = {
     "partner": "Melissa",
     "both": "Ambos",
 }
+
+TIPO_LABELS = {
+        "Despesa": "expense",
+        "Entrada": "income",
+        "Transferência": "transfer",
+    }
 
 PAYER_LABELS = {
     "petrus": "Petrus",
