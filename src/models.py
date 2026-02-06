@@ -31,6 +31,8 @@ class AccountType(str, Enum):
 
 
 class Account(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     owner: Owner = Field(default=Owner.petrus)
@@ -39,12 +41,16 @@ class Account(SQLModel, table=True):
 
 
 class Category(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     type: str  # income | expense | investment | transfer
 
 
 class Transaction(SQLModel, table=True):
+    __table_args__ = {"extend_existing": True}
+
     id: Optional[int] = Field(default=None, primary_key=True)
 
     date: date

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import calendar
+
 import pandas as pd
 import streamlit as st
 
@@ -73,6 +75,20 @@ def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | No
     return out
 
 
+def month_first(d: date) -> date:
+    return date(d.year, d.month, 1)
+
+
+def add_months(d: date, months: int) -> date:
+    y = d.year + (d.month - 1 + months) // 12
+    m = (d.month - 1 + months) % 12 + 1
+    last_day = calendar.monthrange(y, m)[1]
+    day = min(d.day, last_day)
+    return date(y, m, day)
+
+# ------------------------------------
+today = date.today()
+
 st.header(PAGE_LABELS["title"])
 page = st.sidebar.radio(
     PAGE_LABELS["nav"],
@@ -87,10 +103,10 @@ if page == PAGE_LABELS["dash"]:
     # =========================
     st.subheader("Caixa")
 
-    st.metric("Saldo total", brl(cash_total_balance()))
+    st.metric("Saldo total", brl(cash_total_balance(as_of=today)))
     st.caption("Saldos por conta")
 
-    bal_df = balances_by_account(include_credit=False)
+    bal_df = balances_by_account(include_credit=False, as_of=today)
     if not bal_df.empty:
         saldo_ui = format_df(
             bal_df[["account", "balance"]],
@@ -108,10 +124,9 @@ if page == PAGE_LABELS["dash"]:
     # Cartões (fatura)
     # =========================
     st.subheader("Cartões de crédito")
+    st.metric("Total em aberto (cartões)", brl(total_credit_outstanding(as_of=today)))
 
-    st.metric("Total das faturas", brl(total_credit_outstanding()))
-
-    credit_df = credit_outstanding_by_account()
+    credit_df = credit_outstanding_by_account(as_of=today)
     if credit_df.empty:
         st.info("Nenhuma conta de crédito cadastrada.")
     else:
@@ -193,6 +208,7 @@ if page == PAGE_LABELS["dash"]:
         )
         st.dataframe(tx_ui, width="stretch", hide_index=True)
 
+
 # -------- Transações --------
 elif page == PAGE_LABELS["trans"]:
 
@@ -240,8 +256,14 @@ elif page == PAGE_LABELS["trans"]:
         st.session_state["new_valor"] = 0.0
         st.session_state["new_desc"] = ""
         st.session_state["new_card"] = ""
+        st.session_state["new_is_installment"] = False
+        st.session_state["new_total_installments"] = 1
+        st.session_state["new_current_installment"] = 1
 
+
+    # =========================
     # Linha 1: Tipo (sozinho)
+    # =========================
     tipo_ui = st.radio(
         "Tipo",
         options=["Despesa", "Entrada", "Transferência"],
@@ -249,15 +271,45 @@ elif page == PAGE_LABELS["trans"]:
         index=["Despesa", "Entrada", "Transferência"].index(st.session_state.last_tx["tipo"]),
         key="new_tipo",
     )
-
+    
+    # =========================
     # Linha 2: Data e Valor
+    # =========================
     r2c1, r2c2 = st.columns(2)
     with r2c1:
         dt = st.date_input("Data", value=date.today(), key="new_dt")
     with r2c2:
         valor = st.number_input("Valor", min_value=0.0, step=10.0, key="new_valor")
 
+    # =========================
+    # Parcelamento (opcional)
+    # ========================= 
+    p1, p2, p3 = st.columns([1, 1, 1])
+    with p1:
+        is_installment = st.checkbox("Parcelado?", value=False, key="new_is_installment")
+    with p2:
+        total_installments = st.number_input(
+            "Total de parcelas (N)",
+            min_value=1,
+            step=1,
+            value=1,
+            disabled=not is_installment,
+            key="new_total_installments",
+        )
+    with p3:
+        current_installment = st.number_input(
+            "Parcela atual (n)",
+            min_value=1,
+            step=1,
+            value=1,
+            disabled=not is_installment,
+            key="new_current_installment",
+        )
+
+
+    # =========================
     # Linha 3: Descrição, Categoria, Final do cartão
+    # =========================
     r3c1, r3c2, r3c3 = st.columns([3, 2, 1])
 
     with r3c1:
@@ -294,7 +346,9 @@ elif page == PAGE_LABELS["trans"]:
             disabled=not card_enabled,
         )
 
+    # =========================
     # Linha 4: Conta, De quem é, Quem pagou, Divisão (iguais)
+    # =========================
     r4c1, r4c2, r4c3, r4c4 = st.columns(4)
 
     with r4c1:
@@ -329,7 +383,9 @@ elif page == PAGE_LABELS["trans"]:
             key="new_split",
         )
 
+    # =========================
     # Botões (Salvar esq, Limpar dir)
+    # =========================
     b1, b2, b3 = st.columns([1, 3, 1])
     with b1:
         save = st.button("Lançar transação", type="primary")
@@ -339,28 +395,65 @@ elif page == PAGE_LABELS["trans"]:
             st.rerun()
 
     if save:
-        amount = round(float(valor), 2)
+        # validações parcelamento
+        if is_installment:
+            N = int(total_installments)
+            n = int(current_installment)
+            if n > N:
+                st.error("Parcela atual (n) não pode ser maior que o total de parcelas (N).")
+                st.stop()
+        else:
+            N = 1
+            n = 1
+
+        # aplica sinal automaticamente (valor informado é sempre positivo na UI)
+        base_amount = round(float(valor), 2)
         if TIPO_LABELS[tipo_ui] == "expense":
-            amount = -amount
+            base_amount = -base_amount
 
         account_id = acc_map[acc_key]
         category_id = next(c.id for c in cats if c.name == cat_key)
-
         card_to_save = (card_label.strip() or None) if is_credit_account(acc_key) else None
 
-        create_transaction(
-            dt=dt,
-            amount=amount,
-            description=description.strip(),
-            account_id=account_id,
-            category_id=category_id,
-            owner=owner_id,
-            paid_by=paid_by_id,
-            split_mode=split_mode,
-            card_label=card_to_save,
-        )
-        st.success("Transação salva!")
+        # data base: primeiro dia do mês
+        base_date = month_first(dt)
 
+        if not is_installment:
+            create_transaction(
+                dt=dt,
+                amount=base_amount,
+                description=description.strip(),
+                account_id=account_id,
+                category_id=category_id,
+                owner=owner_id,
+                paid_by=paid_by_id,
+                split_mode=split_mode,
+                card_label=card_to_save,
+            )
+            st.success("Transação salva!")
+        else:
+            created = 0
+            for parcela in range(n, N + 1):
+                dtx = add_months(base_date, parcela - n)  # n no mês da data; futuras nos meses seguintes
+                suffix = f" ({parcela}/{N})"
+                desc_i = (description.strip() or "").rstrip()
+
+                create_transaction(
+                    dt=dtx,
+                    amount=base_amount,
+                    description=(desc_i + suffix).strip(),
+                    account_id=account_id,
+                    category_id=category_id,
+                    owner=owner_id,
+                    paid_by=paid_by_id,
+                    split_mode=split_mode,
+                    card_label=card_to_save,
+                )
+                created += 1
+
+            st.success(f"Parcelamento criado: {created} transações ({n}/{N} até {N}/{N}).")
+
+        # guarda defaults (B = último usado)
         st.session_state.last_tx = {
             "tipo": tipo_ui,
             "owner": owner_id,
@@ -373,11 +466,15 @@ elif page == PAGE_LABELS["trans"]:
 
         st.session_state["_reset_new_tx_form"] = True
         st.rerun()
-    # ----------------------------------
+        # ----------------------------------
 
+    # =========================
     st.divider()
+    # =========================
 
+    # ==============================
     # -------- Pagar fatura --------
+    # ==============================
     st.subheader("Pagar fatura")
     with st.expander("Abrir pagamento de fatura"):
         cat_fatura_id = None
@@ -620,6 +717,7 @@ elif page == PAGE_LABELS["trans"]:
             st.warning("Excluído!")
             st.session_state.last_selected_tx_id = None
             st.rerun()
+
 
 # -------- Config --------
 elif page == PAGE_LABELS["config"]:
