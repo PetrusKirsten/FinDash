@@ -289,7 +289,7 @@ elif page == PAGE_LABELS["trans"]:
         is_installment = st.checkbox("Parcelado?", value=False, key="new_is_installment")
     with p2:
         total_installments = st.number_input(
-            "Total de parcelas (N)",
+            "Total de parcelas",
             min_value=1,
             step=1,
             value=1,
@@ -298,7 +298,7 @@ elif page == PAGE_LABELS["trans"]:
         )
     with p3:
         current_installment = st.number_input(
-            "Parcela atual (n)",
+            "Parcela atual",
             min_value=1,
             step=1,
             value=1,
@@ -400,7 +400,7 @@ elif page == PAGE_LABELS["trans"]:
             N = int(total_installments)
             n = int(current_installment)
             if n > N:
-                st.error("Parcela atual (n) não pode ser maior que o total de parcelas (N).")
+                st.error("Parcela atual não pode ser maior que o total de parcelas.")
                 st.stop()
         else:
             N = 1
@@ -536,7 +536,9 @@ elif page == PAGE_LABELS["trans"]:
                         st.success("Pagamento gerado (banco -X, crédito +X).")
     # ----------------------------------
 
+    # ==============================
     st.divider()
+    # ==============================
 
     # -------- Editar transações --------
     st.subheader("Editar ou excluir transações")
@@ -793,7 +795,9 @@ elif page == PAGE_LABELS["config"]:
                 )
                 st.success(f"Ajuste criado: {brl(delta)}")
 
+    # ==============================
     st.divider()
+    # ==============================
 
     st.subheader("Categorias")
 
