@@ -75,6 +75,26 @@ def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | No
     return out
 
 
+def config_2dp(df: pd.DataFrame) -> dict:
+    """
+    Cria column_config para o st.dataframe com 2 casas decimais
+    para todas as colunas numéricas (float/int).
+    """
+    cfg = {}
+    for col in df.columns:
+        if pd.api.types.is_numeric_dtype(df[col]):
+            cfg[col] = st.column_config.NumberColumn(format="%.2f")
+    return cfg
+
+
+def print_df(df: pd.DataFrame, **kwargs):
+    """
+    Wrapper pra sempre aplicar 2 casas decimais em colunas numéricas.
+    Use no lugar de st.dataframe(df, ...)
+    """
+    st.dataframe(df, column_config=config_2dp(df), **kwargs)
+
+
 def month_first(d: date) -> date:
     return date(d.year, d.month, 1)
 
@@ -86,14 +106,94 @@ def add_months(d: date, months: int) -> date:
     day = min(d.day, last_day)
     return date(y, m, day)
 
+
+def get_fatura(d: date, start_day: int = 4, end_day: int = 3) -> tuple[date, date]:
+    """
+    Retorna (inicio, fim) do ciclo de fatura que contém a data d.
+    Ex: start_day=4 e end_day=3:
+      ciclo atual = dia 4 até dia 3 do mês seguinte.
+    """
+    if d.day >= start_day:
+        start = date(d.year, d.month, start_day)
+        end = add_months(date(d.year, d.month, end_day), 1)  # dia 3 do mês seguinte
+    else:
+        start = add_months(date(d.year, d.month, start_day), -1)  # dia 4 do mês anterior
+        end = date(d.year, d.month, end_day)                      # dia 3 do mês atual
+    return start, end
+
+
+def formata_data(start: date, end: date) -> str:
+    return f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
+
+
+def filtra_periodo(title: str, tx_df: pd.DataFrame, mode: str = "cash"):
+    """
+    mode:
+      - "cash": Entradas, Saídas, Saldo + gastos por categoria + transações
+      - "credit": mostra só "Fatura atual" (saídas) + gastos por categoria + transações
+    """
+    # st.subheader(title)
+
+    if tx_df.empty:
+        st.info("Sem transações no período.")
+        return
+
+    if mode == "cash":
+        income = tx_df.loc[tx_df["amount"] > 0, "amount"].sum()
+        expense = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
+        saldo = income + expense
+
+        a, b, c = st.columns(3)
+        a.metric("Entradas", brl(float(income)))
+        b.metric("Saídas", brl(float(abs(expense))))
+        c.metric("Saldo do período", brl(float(saldo)))
+
+    elif mode == "credit":
+        # Para cartão, a fatura é o total de despesas do ciclo (valores negativos)
+        # Pagamento de fatura aparece como positivo, então não entra aqui.
+        fatura = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
+        st.metric("Fatura atual", brl(float(abs(fatura))))
+
+    
+     # ---- Transações ----
+    st.subheader("Transações no período")
+    show_df = tx_df.copy()
+    if "owner" in show_df.columns:
+        show_df["owner"] = show_df["owner"].map(fmt_owner)
+    if "paid_by" in show_df.columns:
+        show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
+    if "split_mode" in show_df.columns:
+        show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
+
+    tx_ui = format_df(show_df, rename=COL_LABELS,
+                      hide=["id", "account_id", "category_id", "account_type", "category_type"])
+    print_df(tx_ui, width="stretch", hide_index=True)
+
+    # ---- Gastos por categoria ----
+    st.subheader("Gastos por categoria no período")
+    by_cat = (
+        tx_df[(tx_df["amount"] < 0) & (tx_df["category_type"] != "transfer")]
+        .groupby("category", as_index=False)["amount"]
+        .sum()
+        .sort_values("amount")
+    )
+    if by_cat.empty:
+        st.caption("Sem gastos (excluindo transferências) no período.")
+    else:
+        by_cat["amount"] = by_cat["amount"].abs()
+        by_cat_ui = format_df(by_cat, rename=COL_LABELS, hide=["account_id"])
+        print_df(by_cat_ui, width="stretch", hide_index=True)
+
+
 # ------------------------------------
 today = date.today()
 
-st.header(PAGE_LABELS["title"])
+st.title(PAGE_LABELS["title"])
 page = st.sidebar.radio(
     PAGE_LABELS["nav"],
     [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]]
 )
+
 
 # -------- Dashboard --------
 if page == PAGE_LABELS["dash"]:
@@ -112,101 +212,113 @@ if page == PAGE_LABELS["dash"]:
             bal_df[["account", "balance"]],
             rename=COL_LABELS,
         )
-        st.dataframe(saldo_ui, width="stretch", hide_index=True)
+        print_df(saldo_ui, width="stretch", hide_index=True)
     else:
         st.info("Nenhuma conta de caixa encontrada (conta corrente/poupança).")
-   
+
     # =========================
-    st.divider()
+    # Resumo no período (Caixa)
+    # =========================
+    # st.subheader("Resumo no período")
+    with st.expander("Ver gastos"):
+
+        default_start = date(today.year, today.month, 1)
+        filter_labels = {"todos": "Todos"} | OWNER_LABELS
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            cash_start = st.date_input("De", value=default_start, key="cash_start")
+        with c2:
+            cash_end = st.date_input("Até", value=today, key="cash_end")
+        with c3:
+            cash_owner = st.selectbox(
+                COL_LABELS["owner"],
+                options=list(filter_labels.keys()),
+                format_func=lambda k: filter_labels[k],
+                index=0,
+                key="cash_owner",
+            )
+
+        tx_cash_all = list_transactions(start=cash_start, end=cash_end, owner=cash_owner)
+
+        accs_dash = list_accounts()
+        credit_ids = {a.id for a in accs_dash if a.type.value == "credit"}
+
+        # filtra apenas contas NÃO-crédito
+        tx_cash = tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)] if not tx_cash_all.empty else tx_cash_all
+
+        filtra_periodo("Caixa", tx_cash, mode="cash")
+
+    # =========================
+    st.markdown("---")
     # =========================
 
     # =========================
-    # Cartões (fatura)
+    # Cartões de crédito (Ciclo atual)
     # =========================
     st.subheader("Cartões de crédito")
-    st.metric("Total em aberto (cartões)", brl(total_credit_outstanding(as_of=today)))
 
-    credit_df = credit_outstanding_by_account(as_of=today)
-    if credit_df.empty:
-        st.info("Nenhuma conta de crédito cadastrada.")
+    cycle_start, cycle_end = get_fatura(today, start_day=4, end_day=3)
+    st.caption(f"Compras entre: {formata_data(cycle_start, cycle_end)}")
+
+    # transações do ciclo
+    tx_cycle_all = list_transactions(start=cycle_start, end=cycle_end, owner="todos")
+    tx_credit_cycle = tx_cycle_all[tx_cycle_all["account_id"].isin(credit_ids)] if not tx_cycle_all.empty else tx_cycle_all
+
+    # tabela por cartão: fatura em aberto (somente despesas do ciclo)
+    if tx_credit_cycle.empty:
+        st.info("Sem transações de cartão no ciclo atual.")
+        credit_ui = pd.DataFrame(columns=["cartao", "fatura"])
     else:
-        credit_ui = format_df(credit_df, hide=['balance'], rename=CREDIT_LABELS)
-        st.dataframe(credit_ui, width="stretch", hide_index=True)
-    
-    # =========================
-    st.divider()
-    # =========================
-
-    # =========================
-    # Resumo por período
-    # =========================
-    st.subheader("Resumo no período")
-
-    today = date.today()
-    default_start = date(today.year, today.month, 1)
-
-    filter_labels = {"todos": "Todos"} | OWNER_LABELS
-
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        start = st.date_input("Início", value=default_start)
-    with c2:
-        end = st.date_input("Fim", value=today)
-    with c3:
-        owner_filter = st.selectbox(
-            COL_LABELS["owner"],
-            options=list(filter_labels.keys()),
-            format_func=lambda k: filter_labels[k],
-            index=0,
-        )
-
-    tx_df = list_transactions(start=start, end=end, owner=owner_filter)
-
-    if tx_df.empty:
-        st.info("Sem transações no período.")
-    else:
-        income = tx_df.loc[tx_df["amount"] > 0, "amount"].sum()
-        expense = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
-        saldo = income + expense
-
-        a, b, c = st.columns(3)
-        a.metric("Entradas", brl(float(income)))
-        b.metric("Saídas", brl(float(abs(expense))))
-        c.metric("Saldo do período", brl(float(saldo)))
-
-        st.subheader("Gastos por categoria no período")
-        by_cat = (
-            tx_df[(tx_df["amount"] < 0) & (tx_df["category_type"] != "transfer")]
-            .groupby("category", as_index=False)["amount"]
+        grp = (
+            tx_credit_cycle[tx_credit_cycle["amount"] < 0]  # só despesas contam na fatura
+            .groupby("account", as_index=False)["amount"]
             .sum()
-            .sort_values("amount")
+            .rename(columns={"account": "cartao"})
         )
-        if by_cat.empty:
-            st.caption("Sem gastos (excluindo transferências) no período.")
-        else:
-            by_cat["amount"] = by_cat["amount"].abs()
-            by_cat_ui = format_df(
-                by_cat,
-                rename=COL_LABELS,
-                hide=["account_id"],
+        grp["fatura"] = grp["amount"].abs()
+        credit_ui = grp[["cartao", "fatura"]].sort_values("cartao")
+
+    total_fatura = float(credit_ui["fatura"].sum()) if not credit_ui.empty else 0.0
+    st.metric("Total", brl(total_fatura))
+
+    if not credit_ui.empty:
+        credit_ui = credit_ui.rename(columns={
+            "cartao": CREDIT_LABELS.get("account", "Cartão"),
+            "fatura": "Fatura atual",
+        })
+        print_df(credit_ui, width="stretch", hide_index=True)
+
+    # =========================
+    # Resumo (Cartões) — ciclo atual
+    # =========================
+    # st.subheader("Resumo da fatura")
+    with st.expander("Ver faturas"):
+
+        ccc1, ccc2 = st.columns(2)
+        with ccc1:
+            cc_owner = st.selectbox(
+                "De quem",
+                options=list(filter_labels.keys()),
+                format_func=lambda k: filter_labels[k],
+                index=0,
+                key="cc_owner",
             )
-            st.dataframe(by_cat_ui, width="stretch", hide_index=True)
+        with ccc2:
+            cc_cartao = st.selectbox(
+                "Cartão",
+                options=["todos"] + sorted([a.name for a in accs_dash if a.id in credit_ids]),
+                index=0,
+                key="cc_card",
+            )
 
-        st.subheader("Transações no período")
-        show_df = tx_df.copy()
-        if "owner" in show_df.columns:
-            show_df["owner"] = show_df["owner"].map(fmt_owner)
-        if "paid_by" in show_df.columns:
-            show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
-        if "split_mode" in show_df.columns:
-            show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
+        tx_cc = tx_credit_cycle.copy()
+        if cc_owner != "todos" and not tx_cc.empty:
+            tx_cc = tx_cc[tx_cc["owner"] == cc_owner]
+        if cc_cartao != "todos" and not tx_cc.empty:
+            tx_cc = tx_cc[tx_cc["account"] == cc_cartao]
 
-        tx_ui = format_df(
-            show_df,
-            rename=COL_LABELS,
-            hide=["account_id", "category_id", "account_type", "category_type"],
-        )
-        st.dataframe(tx_ui, width="stretch", hide_index=True)
+        filtra_periodo("Cartões (ciclo)", tx_cc, mode="credit")
 
 
 # -------- Transações --------
@@ -552,7 +664,7 @@ elif page == PAGE_LABELS["trans"]:
             end = st.date_input("Filtro fim", value=date.today(), key="fend")
         with f3:
             owner_filter = st.selectbox(
-                "Filtro owner",
+                "De quem",
                 options=list(filter_labels.keys()),
                 format_func=lambda k: filter_labels[k],
                 index=0,
@@ -572,9 +684,9 @@ elif page == PAGE_LABELS["trans"]:
         tx_list_ui = format_df(
             show_df,
             rename=COL_LABELS,
-            hide=["account_id", "category_id"],
+            hide=["id", "account_id", "category_id"],
         )
-        st.dataframe(tx_list_ui, width="stretch", hide_index=True)
+        print_df(tx_list_ui, width="stretch", hide_index=True)
 
         df_label = df.copy()
         df_label["label"] = (
@@ -736,7 +848,7 @@ elif page == PAGE_LABELS["config"]:
             "type":            "Tipo",
             "initial_balance": "Saldo inicial (R$)",
         }
-        st.dataframe(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width="stretch", hide_index=True)
+        print_df(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width="stretch", hide_index=True)
 
     with st.expander("Adicionar conta"):
         name = st.text_input("Nome da conta", value="")
@@ -805,7 +917,7 @@ elif page == PAGE_LABELS["config"]:
     if cats:
         df_cat = pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]]
         COL_CAT_PT = {"id": "ID", "name": "Categoria", "type": "Tipo"}
-        st.dataframe(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width="stretch", hide_index=True)
+        print_df(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width="stretch", hide_index=True)
 
     with st.expander("Adicionar categoria"):
         cname = st.text_input("Nome da categoria", value="")

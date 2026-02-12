@@ -10,7 +10,7 @@ COL_LABELS = {
     "category":      "Categoria",
     "category_type": "Tipo da categoria",
     "account_type":  "Tipo da conta",
-    "owner":         "De quem é",
+    "owner":         "De quem",
     "paid_by":       "Quem pagou",
     "split_mode":    "Divisão",
     "card_label":    "Cartão (Final)",
