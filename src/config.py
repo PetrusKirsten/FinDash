@@ -54,3 +54,18 @@ SPLIT_LABELS = {
     "equal":     "Dividir 50/50",
     "other_100": "100% do outro",
 }
+
+MESES_PT = [
+    "Janeiro", 
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro"
+]

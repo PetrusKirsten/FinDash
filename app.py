@@ -15,7 +15,8 @@ from src.config import (
     TIPO_LABELS,
     CREDIT_LABELS,
     PAYER_LABELS,
-    SPLIT_LABELS
+    SPLIT_LABELS,
+    MESES_PT
 )
 
 from src.services.seed import seed_defaults
@@ -122,8 +123,8 @@ def get_fatura(d: date, start_day: int = 4, end_day: int = 3) -> tuple[date, dat
     return start, end
 
 
-def formata_data(start: date, end: date) -> str:
-    return f"{start.strftime('%d/%m/%Y')} → {end.strftime('%d/%m/%Y')}"
+def compras_entre(start: date, end: date) -> str:
+    return f"{start.strftime('%d/%m/%Y')} e {end.strftime('%d/%m/%Y')}"
 
 
 def filtra_periodo(title: str, tx_df: pd.DataFrame, mode: str = "cash"):
@@ -250,24 +251,51 @@ if page == PAGE_LABELS["dash"]:
         filtra_periodo("Caixa", tx_cash, mode="cash")
 
     # =========================
-    st.markdown("---")
+    st.divider()
+    # st.markdown("---")
     # =========================
 
     # =========================
-    # Cartões de crédito (Ciclo atual)
+    # Cartões de crédito (Ciclo navegável)
     # =========================
     st.subheader("Cartões de crédito")
 
-    cycle_start, cycle_end = get_fatura(today, start_day=4, end_day=3)
-    st.caption(f"Compras entre: {formata_data(cycle_start, cycle_end)}")
+    # --- Navegação do ciclo (anterior / atual / próximo) ---
+    if "cc_cycle_offset" not in st.session_state:
+        st.session_state["cc_cycle_offset"] = 0
+
+    nav1, nav2, nav3, nav4 = st.columns([3, 1, 1, 1])
+    ref_date = add_months(today, int(st.session_state["cc_cycle_offset"]))
+    cycle_start, cycle_end = get_fatura(ref_date, start_day=4, end_day=3)
+
+    cycle_label = f"{MESES_PT[cycle_start.month - 1]}/{cycle_start.year}"
+
+    with nav1:
+        st.markdown(f"**Faturas de:** {cycle_label}")
+
+    with nav2:
+        if st.button("◀", key="cc_prev"):
+            st.session_state["cc_cycle_offset"] -= 1
+            st.rerun()
+    with nav3:
+        if st.button("⟳", key="cc_now"):
+            st.session_state["cc_cycle_offset"] = 0
+            st.rerun()
+    with nav4:
+        if st.button("▶", key="cc_next"):
+            st.session_state["cc_cycle_offset"] += 1
+            st.rerun()
+
+    st.caption(f"Compras entre: {compras_entre(cycle_start, cycle_end)}")
+
 
     # transações do ciclo
     tx_cycle_all = list_transactions(start=cycle_start, end=cycle_end, owner="todos")
     tx_credit_cycle = tx_cycle_all[tx_cycle_all["account_id"].isin(credit_ids)] if not tx_cycle_all.empty else tx_cycle_all
 
-    # tabela por cartão: fatura em aberto (somente despesas do ciclo)
+    # tabela por cartão: fatura do ciclo (somente despesas do ciclo)
     if tx_credit_cycle.empty:
-        st.info("Sem transações de cartão no ciclo atual.")
+        st.info("Sem transações de cartão nesse ciclo.")
         credit_ui = pd.DataFrame(columns=["cartao", "fatura"])
     else:
         grp = (
@@ -285,14 +313,13 @@ if page == PAGE_LABELS["dash"]:
     if not credit_ui.empty:
         credit_ui = credit_ui.rename(columns={
             "cartao": CREDIT_LABELS.get("account", "Cartão"),
-            "fatura": "Fatura atual",
+            "fatura": "Fatura do ciclo",
         })
         print_df(credit_ui, width="stretch", hide_index=True)
 
     # =========================
-    # Resumo (Cartões) — ciclo atual
+    # Resumo (Cartões) — ciclo selecionado
     # =========================
-    # st.subheader("Resumo da fatura")
     with st.expander("Ver faturas"):
 
         ccc1, ccc2 = st.columns(2)
@@ -319,6 +346,7 @@ if page == PAGE_LABELS["dash"]:
             tx_cc = tx_cc[tx_cc["account"] == cc_cartao]
 
         filtra_periodo("Cartões (ciclo)", tx_cc, mode="credit")
+
 
 
 # -------- Transações --------
