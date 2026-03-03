@@ -1,72 +1,86 @@
 from __future__ import annotations
 
+# """Aplicação Streamlit de finanças pessoais.
+
+# Este arquivo concentra:
+# - bootstrap do banco + seed
+# - utilitários de formatação e datas
+# - renderização das 3 páginas principais (Dashboard, Transações, Config)
+# - roteamento de navegação no `main()`
+
+# Objetivo desta versão:
+# - manter a mesma funcionalidade
+# - melhorar legibilidade com funções por responsabilidade
+# - documentar claramente as regras de negócio no fluxo de UI
+# """
+
 import calendar
+from datetime import date
 
 import pandas as pd
 import streamlit as st
 
-from datetime import date
-
-from src.db import init_db
 from src.config import (
     COL_LABELS,
-    PAGE_LABELS,
-    OWNER_LABELS,
-    TIPO_LABELS,
     CREDIT_LABELS,
+    MESES_PT,
+    OWNER_LABELS,
+    PAGE_LABELS,
     PAYER_LABELS,
     SPLIT_LABELS,
-    MESES_PT
+    TIPO_LABELS,
 )
-
+from src.db import init_db
+from src.services.accounts import create_account, list_accounts
+from src.services.categories import create_category, get_category_id_by_name, list_categories
+from src.services.dashboards import balances_by_account, cash_total_balance
 from src.services.seed import seed_defaults
-from src.services.dashboards import (
-    balances_by_account,
-    cash_total_balance,
-    credit_outstanding_by_account,
-    total_credit_outstanding,
-)
-
-from src.services.accounts import list_accounts, create_account
-from src.services.categories import list_categories, create_category, get_category_id_by_name
 from src.services.transactions import (
     create_transaction,
-    update_transaction,
+    current_balance_for_account,
     delete_transaction,
     list_transactions,
-    current_balance_for_account
+    update_transaction,
 )
 
 
 @st.cache_resource
-def bootstrap():
+def bootstrap() -> None:
+    """Inicializa recursos persistentes da aplicação (executa uma vez por sessão)."""
     init_db()
     seed_defaults()
 
-bootstrap()
 
-
-st.set_page_config(page_title=PAGE_LABELS["title"], layout="wide")
-
-
-# -------- Funções auxiliares --------
 def brl(x: float) -> str:
+    """Formata valor numérico para moeda BRL com separadores pt-BR."""
     return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def fmt_owner(k: str) -> str:
+    """Converte id interno de owner para label amigável."""
     return OWNER_LABELS.get(k, k)
 
 
 def fmt_payer(k: str) -> str:
+    """Converte id interno de pagador para label amigável."""
     return PAYER_LABELS.get(k, k)
 
 
 def fmt_split(k: str) -> str:
+    """Converte id interno de divisão para label amigável."""
     return SPLIT_LABELS.get(k, k)
 
 
-def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | None = None) -> pd.DataFrame:
+def format_df(
+    df: pd.DataFrame,
+    rename: dict | None = None,
+    hide: list[str] | None = None,
+) -> pd.DataFrame:
+    """Aplica transformações visuais em DataFrame para exibição no Streamlit.
+
+    - `hide`: remove colunas técnicas/irrelevantes para UI.
+    - `rename`: renomeia colunas para labels de negócio.
+    """
     out = df.copy()
     if hide:
         cols_to_drop = [c for c in hide if c in out.columns]
@@ -77,30 +91,26 @@ def format_df(df: pd.DataFrame, rename: dict | None = None, hide: list[str] | No
 
 
 def config_2dp(df: pd.DataFrame) -> dict:
-    """
-    Cria column_config para o st.dataframe com 2 casas decimais
-    para todas as colunas numéricas (float/int).
-    """
-    cfg = {}
+    """Gera `column_config` com 2 casas decimais para colunas numéricas."""
+    cfg: dict[str, st.column_config.NumberColumn] = {}
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
             cfg[col] = st.column_config.NumberColumn(format="%.2f")
     return cfg
 
 
-def print_df(df: pd.DataFrame, **kwargs):
-    """
-    Wrapper pra sempre aplicar 2 casas decimais em colunas numéricas.
-    Use no lugar de st.dataframe(df, ...)
-    """
+def print_df(df: pd.DataFrame, **kwargs) -> None:
+    """Wrapper de `st.dataframe` com padronização de colunas numéricas."""
     st.dataframe(df, column_config=config_2dp(df), **kwargs)
 
 
 def month_first(d: date) -> date:
+    """Retorna o primeiro dia do mês da data informada."""
     return date(d.year, d.month, 1)
 
 
 def add_months(d: date, months: int) -> date:
+    """Soma meses preservando o dia quando possível (com ajuste para fim de mês)."""
     y = d.year + (d.month - 1 + months) // 12
     m = (d.month - 1 + months) % 12 + 1
     last_day = calendar.monthrange(y, m)[1]
@@ -109,55 +119,65 @@ def add_months(d: date, months: int) -> date:
 
 
 def get_fatura(d: date, start_day: int = 4, end_day: int = 3) -> tuple[date, date]:
-    """
-    Retorna (inicio, fim) do ciclo de fatura que contém a data d.
-    Ex: start_day=4 e end_day=3:
-      ciclo atual = dia 4 até dia 3 do mês seguinte.
+    """Calcula o ciclo de fatura que contém `d`.
+
+    Exemplo padrão:
+    - início dia 4
+    - fim dia 3 do mês seguinte
     """
     if d.day >= start_day:
         start = date(d.year, d.month, start_day)
-        end = add_months(date(d.year, d.month, end_day), 1)  # dia 3 do mês seguinte
+        end = add_months(date(d.year, d.month, end_day), 1)
     else:
-        start = add_months(date(d.year, d.month, start_day), -1)  # dia 4 do mês anterior
-        end = date(d.year, d.month, end_day)                      # dia 3 do mês atual
+        start = add_months(date(d.year, d.month, start_day), -1)
+        end = date(d.year, d.month, end_day)
     return start, end
 
 
 def compras_entre(start: date, end: date) -> str:
+    """Texto amigável do intervalo de compras do ciclo de fatura."""
     return f"{start.strftime('%d/%m/%Y')} e {end.strftime('%d/%m/%Y')}"
 
 
-def filtra_periodo(title: str, tx_df: pd.DataFrame, mode: str = "cash"):
-    """
-    mode:
-      - "cash": Entradas, Saídas, Saldo + gastos por categoria + transações
-      - "credit": mostra só "Fatura atual" (saídas) + gastos por categoria + transações
-    """
-    # st.subheader(title)
+def is_credit_account(accs: list, account_name: str) -> bool:
+    """Informa se uma conta (pelo nome) é do tipo crédito."""
+    acc = next((a for a in accs if a.name == account_name), None)
+    return bool(acc and acc.type.value == "credit")
 
+
+def tipo_label_for(tipo_value: str) -> str:
+    """Mapeia valor interno de tipo para o label da UI (ex: `expense` -> `Despesa`)."""
+    return next((label for label, value in TIPO_LABELS.items() if value == tipo_value), tipo_value)
+
+
+def filtra_periodo(tx_df: pd.DataFrame, mode: str = "cash") -> None:
+    """Renderiza resumo e tabelas de transações para um período.
+
+    Modos:
+    - `cash`: entradas, saídas e saldo
+    - `credit`: somente total da fatura (despesas negativas)
+    """
     if tx_df.empty:
-        st.info("Sem transações no período.")
+        st.info("Sem transacoes no periodo.")
         return
 
+    # Métricas de topo mudam conforme o contexto de análise.
     if mode == "cash":
         income = tx_df.loc[tx_df["amount"] > 0, "amount"].sum()
         expense = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
         saldo = income + expense
 
-        a, b, c = st.columns(3)
-        a.metric("Entradas", brl(float(income)))
-        b.metric("Saídas", brl(float(abs(expense))))
-        c.metric("Saldo do período", brl(float(saldo)))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Entradas", brl(float(income)))
+        c2.metric("Saidas", brl(float(abs(expense))))
+        c3.metric("Saldo do periodo", brl(float(saldo)))
 
     elif mode == "credit":
-        # Para cartão, a fatura é o total de despesas do ciclo (valores negativos)
-        # Pagamento de fatura aparece como positivo, então não entra aqui.
         fatura = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
         st.metric("Fatura atual", brl(float(abs(fatura))))
 
-    
-     # ---- Transações ----
-    st.subheader("Transações no período")
+    # Tabela detalhada do período com labels de apresentação.
+    st.subheader("Transacoes no periodo")
     show_df = tx_df.copy()
     if "owner" in show_df.columns:
         show_df["owner"] = show_df["owner"].map(fmt_owner)
@@ -166,12 +186,15 @@ def filtra_periodo(title: str, tx_df: pd.DataFrame, mode: str = "cash"):
     if "split_mode" in show_df.columns:
         show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-    tx_ui = format_df(show_df, rename=COL_LABELS,
-                      hide=["id", "account_id", "category_id", "account_type", "category_type"])
+    tx_ui = format_df(
+        show_df,
+        rename=COL_LABELS,
+        hide=["id", "account_id", "category_id", "account_type", "category_type"],
+    )
     print_df(tx_ui, width="stretch", hide_index=True)
 
-    # ---- Gastos por categoria ----
-    st.subheader("Gastos por categoria no período")
+    # Agregado por categoria: apenas despesas e exclui transferências.
+    st.subheader("Gastos por categoria no periodo")
     by_cat = (
         tx_df[(tx_df["amount"] < 0) & (tx_df["category_type"] != "transfer")]
         .groupby("category", as_index=False)["amount"]
@@ -179,29 +202,17 @@ def filtra_periodo(title: str, tx_df: pd.DataFrame, mode: str = "cash"):
         .sort_values("amount")
     )
     if by_cat.empty:
-        st.caption("Sem gastos (excluindo transferências) no período.")
-    else:
-        by_cat["amount"] = by_cat["amount"].abs()
-        by_cat_ui = format_df(by_cat, rename=COL_LABELS, hide=["account_id"])
-        print_df(by_cat_ui, width="stretch", hide_index=True)
+        st.caption("Sem gastos (excluindo transferencias) no periodo.")
+        return
+
+    by_cat["amount"] = by_cat["amount"].abs()
+    by_cat_ui = format_df(by_cat, rename=COL_LABELS, hide=["account_id"])
+    print_df(by_cat_ui, width="stretch", hide_index=True)
 
 
-# ------------------------------------
-today = date.today()
-
-st.title(PAGE_LABELS["title"])
-page = st.sidebar.radio(
-    PAGE_LABELS["nav"],
-    [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]]
-)
-
-
-# -------- Dashboard --------
-if page == PAGE_LABELS["dash"]:
-
-    # =========================
-    # Caixa (sem cartão)
-    # =========================
+def render_dashboard_page(today: date) -> None:
+    """Página inicial: visão consolidada de caixa + cartões de crédito."""
+    # Bloco 1: caixa (contas não-crédito).
     st.subheader("Caixa")
 
     st.metric("Saldo total", brl(cash_total_balance(as_of=today)))
@@ -209,28 +220,24 @@ if page == PAGE_LABELS["dash"]:
 
     bal_df = balances_by_account(include_credit=False, as_of=today)
     if not bal_df.empty:
-        saldo_ui = format_df(
-            bal_df[["account", "balance"]],
-            rename=COL_LABELS,
-        )
+        saldo_ui = format_df(bal_df[["account", "balance"]], rename=COL_LABELS)
         print_df(saldo_ui, width="stretch", hide_index=True)
     else:
-        st.info("Nenhuma conta de caixa encontrada (conta corrente/poupança).")
+        st.info("Nenhuma conta de caixa encontrada (conta corrente/poupanca).")
 
-    # =========================
-    # Resumo no período (Caixa)
-    # =========================
-    # st.subheader("Resumo no período")
+    accs_dash = list_accounts()
+    credit_ids = {a.id for a in accs_dash if a.type.value == "credit"}
+    filter_labels = {"todos": "Todos"} | OWNER_LABELS
+
+    # Filtro expandível para análise de gastos de caixa no período.
     with st.expander("Ver gastos"):
-
         default_start = date(today.year, today.month, 1)
-        filter_labels = {"todos": "Todos"} | OWNER_LABELS
 
         c1, c2, c3 = st.columns(3)
         with c1:
             cash_start = st.date_input("De", value=default_start, key="cash_start")
         with c2:
-            cash_end = st.date_input("Até", value=today, key="cash_end")
+            cash_end = st.date_input("Ate", value=today, key="cash_end")
         with c3:
             cash_owner = st.selectbox(
                 COL_LABELS["owner"],
@@ -241,65 +248,57 @@ if page == PAGE_LABELS["dash"]:
             )
 
         tx_cash_all = list_transactions(start=cash_start, end=cash_end, owner=cash_owner)
+        tx_cash = (
+            tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)]
+            if not tx_cash_all.empty
+            else tx_cash_all
+        )
+        filtra_periodo(tx_cash, mode="cash")
 
-        accs_dash = list_accounts()
-        credit_ids = {a.id for a in accs_dash if a.type.value == "credit"}
-
-        # filtra apenas contas NÃO-crédito
-        tx_cash = tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)] if not tx_cash_all.empty else tx_cash_all
-
-        filtra_periodo("Caixa", tx_cash, mode="cash")
-
-    # =========================
     st.divider()
-    # st.markdown("---")
-    # =========================
 
-    # =========================
-    # Cartões de crédito (Ciclo navegável)
-    # =========================
-    st.subheader("Cartões de crédito")
+    # Bloco 2: cartões de crédito com navegação de ciclo (mês anterior/atual/próximo).
+    st.subheader("Cartoes de credito")
 
-    # --- Navegação do ciclo (anterior / atual / próximo) ---
     if "cc_cycle_offset" not in st.session_state:
         st.session_state["cc_cycle_offset"] = 0
 
     nav1, nav2, nav3, nav4 = st.columns([3, 1, 1, 1])
     ref_date = add_months(today, int(st.session_state["cc_cycle_offset"]))
     cycle_start, cycle_end = get_fatura(ref_date, start_day=4, end_day=3)
-
     cycle_label = f"{MESES_PT[cycle_start.month - 1]}/{cycle_start.year}"
 
     with nav1:
         st.markdown(f"**Faturas de:** {cycle_label}")
-
     with nav2:
-        if st.button("◀", key="cc_prev"):
+        if st.button("Anterior", key="cc_prev"):
             st.session_state["cc_cycle_offset"] -= 1
             st.rerun()
     with nav3:
-        if st.button("⟳", key="cc_now"):
+        if st.button("Atual", key="cc_now"):
             st.session_state["cc_cycle_offset"] = 0
             st.rerun()
     with nav4:
-        if st.button("▶", key="cc_next"):
+        if st.button("Proximo", key="cc_next"):
             st.session_state["cc_cycle_offset"] += 1
             st.rerun()
 
     st.caption(f"Compras entre: {compras_entre(cycle_start, cycle_end)}")
 
-
-    # transações do ciclo
     tx_cycle_all = list_transactions(start=cycle_start, end=cycle_end, owner="todos")
-    tx_credit_cycle = tx_cycle_all[tx_cycle_all["account_id"].isin(credit_ids)] if not tx_cycle_all.empty else tx_cycle_all
+    tx_credit_cycle = (
+        tx_cycle_all[tx_cycle_all["account_id"].isin(credit_ids)]
+        if not tx_cycle_all.empty
+        else tx_cycle_all
+    )
 
-    # tabela por cartão: fatura do ciclo (somente despesas do ciclo)
+    # Resumo por cartão considera apenas despesas (valores negativos).
     if tx_credit_cycle.empty:
-        st.info("Sem transações de cartão nesse ciclo.")
+        st.info("Sem transacoes de cartao nesse ciclo.")
         credit_ui = pd.DataFrame(columns=["cartao", "fatura"])
     else:
         grp = (
-            tx_credit_cycle[tx_credit_cycle["amount"] < 0]  # só despesas contam na fatura
+            tx_credit_cycle[tx_credit_cycle["amount"] < 0]
             .groupby("account", as_index=False)["amount"]
             .sum()
             .rename(columns={"account": "cartao"})
@@ -311,19 +310,17 @@ if page == PAGE_LABELS["dash"]:
     st.metric("Total", brl(total_fatura))
 
     if not credit_ui.empty:
-        credit_ui = credit_ui.rename(columns={
-            "cartao": CREDIT_LABELS.get("account", "Cartão"),
-            "fatura": "Fatura do ciclo",
-        })
+        credit_ui = credit_ui.rename(
+            columns={
+                "cartao": CREDIT_LABELS.get("account", "Cartao"),
+                "fatura": "Fatura do ciclo",
+            }
+        )
         print_df(credit_ui, width="stretch", hide_index=True)
 
-    # =========================
-    # Resumo (Cartões) — ciclo selecionado
-    # =========================
     with st.expander("Ver faturas"):
-
-        ccc1, ccc2 = st.columns(2)
-        with ccc1:
+        c1, c2 = st.columns(2)
+        with c1:
             cc_owner = st.selectbox(
                 "De quem",
                 options=list(filter_labels.keys()),
@@ -331,9 +328,9 @@ if page == PAGE_LABELS["dash"]:
                 index=0,
                 key="cc_owner",
             )
-        with ccc2:
+        with c2:
             cc_cartao = st.selectbox(
-                "Cartão",
+                "Cartao",
                 options=["todos"] + sorted([a.name for a in accs_dash if a.id in credit_ids]),
                 index=0,
                 key="cc_card",
@@ -345,25 +342,14 @@ if page == PAGE_LABELS["dash"]:
         if cc_cartao != "todos" and not tx_cc.empty:
             tx_cc = tx_cc[tx_cc["account"] == cc_cartao]
 
-        filtra_periodo("Cartões (ciclo)", tx_cc, mode="credit")
+        filtra_periodo(tx_cc, mode="credit")
 
 
+def render_new_transaction_form(accs: list, cats: list) -> None:
+    """Formulário principal para lançamento de transações."""
+    st.subheader("Lancar transacao")
 
-# -------- Transações --------
-elif page == PAGE_LABELS["trans"]:
-
-    # -------- Lançar transação --------
-    st.subheader("Lançar transação")
-
-    accs = list_accounts()
-    cats = list_categories()
-
-    if not accs or not cats:
-        st.warning("Crie ao menos 1 conta e 1 categoria na aba Config.")
-        st.stop()
-
-    acc_map = {f"{a.name}": a.id for a in accs}
-
+    acc_map = {a.name: a.id for a in accs}
     cats_by_type = {
         "income": [c for c in cats if c.type == "income"],
         "expense": [c for c in cats if c.type == "expense"],
@@ -372,6 +358,7 @@ elif page == PAGE_LABELS["trans"]:
     }
 
     if "last_tx" not in st.session_state:
+        # Guarda defaults para acelerar lançamentos repetitivos.
         st.session_state.last_tx = {
             "tipo": "Despesa",
             "owner": list(OWNER_LABELS.keys())[0],
@@ -382,15 +369,10 @@ elif page == PAGE_LABELS["trans"]:
             "card_label": "",
         }
 
-    # garante default da conta no session_state (pra usar no cartão)
     if "new_account" not in st.session_state:
         st.session_state["new_account"] = st.session_state.last_tx["account"]
 
-    def is_credit_account(account_name: str) -> bool:
-        acc = next((a for a in accs if a.name == account_name), None)
-        return bool(acc and acc.type.value == "credit")
-
-    # --- reset antes de instanciar widgets ---
+    # Flag de reset: limpa campos controlados sem perder toda a sessão.
     if st.session_state.get("_reset_new_tx_form", False):
         st.session_state["_reset_new_tx_form"] = False
         st.session_state["new_valor"] = 0.0
@@ -400,31 +382,21 @@ elif page == PAGE_LABELS["trans"]:
         st.session_state["new_total_installments"] = 1
         st.session_state["new_current_installment"] = 1
 
-
-    # =========================
-    # Linha 1: Tipo (sozinho)
-    # =========================
     tipo_ui = st.radio(
         "Tipo",
-        options=["Despesa", "Entrada", "Transferência"],
+        options=list(TIPO_LABELS.keys()),
         horizontal=True,
-        index=["Despesa", "Entrada", "Transferência"].index(st.session_state.last_tx["tipo"]),
+        index=list(TIPO_LABELS.keys()).index(st.session_state.last_tx["tipo"]),
         key="new_tipo",
     )
-    
-    # =========================
-    # Linha 2: Data e Valor
-    # =========================
+
     r2c1, r2c2 = st.columns(2)
     with r2c1:
         dt = st.date_input("Data", value=date.today(), key="new_dt")
     with r2c2:
         valor = st.number_input("Valor", min_value=0.0, step=10.0, key="new_valor")
 
-    # =========================
-    # Parcelamento (opcional)
-    # ========================= 
-    p1, p2, p3 = st.columns([1, 1, 1])
+    p1, p2, p3 = st.columns(3)
     with p1:
         is_installment = st.checkbox("Parcelado?", value=False, key="new_is_installment")
     with p2:
@@ -446,16 +418,12 @@ elif page == PAGE_LABELS["trans"]:
             key="new_current_installment",
         )
 
-
-    # =========================
-    # Linha 3: Descrição, Categoria, Final do cartão
-    # =========================
     r3c1, r3c2, r3c3 = st.columns([3, 2, 1])
-
     with r3c1:
-        description = st.text_input("Descrição", value="", key="new_desc")
+        description = st.text_input("Descricao", value="", key="new_desc")
 
     with r3c2:
+        # Categoria disponível depende do tipo escolhido (income/expense/...).
         tipo = TIPO_LABELS[tipo_ui]
         allowed = cats_by_type.get(tipo, cats)
 
@@ -475,30 +443,35 @@ elif page == PAGE_LABELS["trans"]:
         )
 
     with r3c3:
-        selected_acc_name = st.session_state.get("new_account", st.session_state.last_tx["account"])
-        card_enabled = is_credit_account(selected_acc_name)
+        # Campo "Final do Cartão" só faz sentido para conta de crédito.
+        selected_acc_name = st.session_state.get(
+            "new_account", st.session_state.last_tx["account"]
+        )
+        card_enabled = is_credit_account(accs, selected_acc_name)
 
         card_label = st.text_input(
-            "Final do Cartão",
+            "Final do Cartao",
             value=st.session_state.last_tx["card_label"],
             key="new_card",
             help="Opcional (ex: 9124).",
             disabled=not card_enabled,
         )
 
-    # =========================
-    # Linha 4: Conta, De quem é, Quem pagou, Divisão (iguais)
-    # =========================
     r4c1, r4c2, r4c3, r4c4 = st.columns(4)
-
     with r4c1:
         acc_names = list(acc_map.keys())
-        acc_default = st.session_state.last_tx["account"] if st.session_state.last_tx["account"] in acc_names else acc_names[0]
-        acc_key = st.selectbox("Conta", options=acc_names, index=acc_names.index(acc_default), key="new_account")
+        acc_default = (
+            st.session_state.last_tx["account"]
+            if st.session_state.last_tx["account"] in acc_names
+            else acc_names[0]
+        )
+        acc_key = st.selectbox(
+            "Conta", options=acc_names, index=acc_names.index(acc_default), key="new_account"
+        )
 
     with r4c2:
         owner_id = st.selectbox(
-            "De quem é",
+            "De quem e",
             options=list(OWNER_LABELS.keys()),
             format_func=fmt_owner,
             index=list(OWNER_LABELS.keys()).index(st.session_state.last_tx["owner"]),
@@ -516,53 +489,72 @@ elif page == PAGE_LABELS["trans"]:
 
     with r4c4:
         split_mode = st.selectbox(
-            "Divisão",
+            "Divisao",
             options=list(SPLIT_LABELS.keys()),
             format_func=fmt_split,
             index=list(SPLIT_LABELS.keys()).index(st.session_state.last_tx["split_mode"]),
             key="new_split",
         )
 
-    # =========================
-    # Botões (Salvar esq, Limpar dir)
-    # =========================
-    b1, b2, b3 = st.columns([1, 3, 1])
+    b1, _, b3 = st.columns([1, 3, 1])
     with b1:
-        save = st.button("Lançar transação", type="primary")
+        save = st.button("Lancar transacao", type="primary")
     with b3:
         if st.button("Limpar"):
             st.session_state["_reset_new_tx_form"] = True
             st.rerun()
 
-    if save:
-        # validações parcelamento
-        if is_installment:
-            N = int(total_installments)
-            n = int(current_installment)
-            if n > N:
-                st.error("Parcela atual não pode ser maior que o total de parcelas.")
-                st.stop()
-        else:
-            N = 1
-            n = 1
+    if not save:
+        return
 
-        # aplica sinal automaticamente (valor informado é sempre positivo na UI)
-        base_amount = round(float(valor), 2)
-        if TIPO_LABELS[tipo_ui] == "expense":
-            base_amount = -base_amount
+    # Regras de integridade do parcelamento.
+    if is_installment:
+        n_total = int(total_installments)
+        n_current = int(current_installment)
+        if n_current > n_total:
+            st.error("Parcela atual nao pode ser maior que o total de parcelas.")
+            st.stop()
+    else:
+        n_total = 1
+        n_current = 1
 
-        account_id = acc_map[acc_key]
-        category_id = next(c.id for c in cats if c.name == cat_key)
-        card_to_save = (card_label.strip() or None) if is_credit_account(acc_key) else None
+    base_amount = round(float(valor), 2)
+    # Na UI o usuário digita valor positivo; sinal é inferido pelo tipo.
+    if TIPO_LABELS[tipo_ui] == "expense":
+        base_amount = -base_amount
 
-        # data base: primeiro dia do mês
-        base_date = month_first(dt)
+    account_id = acc_map[acc_key]
+    category_id = next(c.id for c in cats if c.name == cat_key)
+    card_to_save = (card_label.strip() or None) if is_credit_account(accs, acc_key) else None
 
-        if not is_installment:
+    base_date = month_first(dt)
+
+    # Fluxo A: lançamento único.
+    if not is_installment:
+        create_transaction(
+            dt=dt,
+            amount=base_amount,
+            description=description.strip(),
+            account_id=account_id,
+            category_id=category_id,
+            owner=owner_id,
+            paid_by=paid_by_id,
+            split_mode=split_mode,
+            card_label=card_to_save,
+        )
+        st.success("Transacao salva!")
+    else:
+        # Fluxo B: parcelado, gerando uma transação por mês.
+        created = 0
+        for parcela in range(n_current, n_total + 1):
+            dtx = add_months(base_date, parcela - n_current)
+            suffix = f" ({parcela}/{n_total})"
+            desc_i = (description.strip() or "").rstrip()
+
             create_transaction(
-                dt=dt,
+                dt=dtx,
                 amount=base_amount,
-                description=description.strip(),
+                description=(desc_i + suffix).strip(),
                 account_id=account_id,
                 category_id=category_id,
                 owner=owner_id,
@@ -570,51 +562,28 @@ elif page == PAGE_LABELS["trans"]:
                 split_mode=split_mode,
                 card_label=card_to_save,
             )
-            st.success("Transação salva!")
-        else:
-            created = 0
-            for parcela in range(n, N + 1):
-                dtx = add_months(base_date, parcela - n)  # n no mês da data; futuras nos meses seguintes
-                suffix = f" ({parcela}/{N})"
-                desc_i = (description.strip() or "").rstrip()
+            created += 1
 
-                create_transaction(
-                    dt=dtx,
-                    amount=base_amount,
-                    description=(desc_i + suffix).strip(),
-                    account_id=account_id,
-                    category_id=category_id,
-                    owner=owner_id,
-                    paid_by=paid_by_id,
-                    split_mode=split_mode,
-                    card_label=card_to_save,
-                )
-                created += 1
+        st.success(
+            f"Parcelamento criado: {created} transacoes ({n_current}/{n_total} ate {n_total}/{n_total})."
+        )
 
-            st.success(f"Parcelamento criado: {created} transações ({n}/{N} até {N}/{N}).")
+    st.session_state.last_tx = {
+        "tipo": tipo_ui,
+        "owner": owner_id,
+        "paid_by": paid_by_id,
+        "split_mode": split_mode,
+        "account": acc_key,
+        "category": cat_key,
+        "card_label": (card_label.strip() if is_credit_account(accs, acc_key) else ""),
+    }
 
-        # guarda defaults (B = último usado)
-        st.session_state.last_tx = {
-            "tipo": tipo_ui,
-            "owner": owner_id,
-            "paid_by": paid_by_id,
-            "split_mode": split_mode,
-            "account": acc_key,
-            "category": cat_key,
-            "card_label": (card_label.strip() if is_credit_account(acc_key) else ""),
-        }
+    st.session_state["_reset_new_tx_form"] = True
+    st.rerun()
 
-        st.session_state["_reset_new_tx_form"] = True
-        st.rerun()
-        # ----------------------------------
 
-    # =========================
-    st.divider()
-    # =========================
-
-    # ==============================
-    # -------- Pagar fatura --------
-    # ==============================
+def render_invoice_payment(accs: list, cats: list) -> None:
+    """Fluxo auxiliar para pagamento de fatura (2 lançamentos espelhados)."""
     st.subheader("Pagar fatura")
     with st.expander("Abrir pagamento de fatura"):
         cat_fatura_id = None
@@ -625,69 +594,79 @@ elif page == PAGE_LABELS["trans"]:
                 break
 
         if cat_fatura_id is None:
-            st.error("Categoria 'Pgto. de fatura' não encontrada. Verifique a seed.")
-        else:
-            bank_accounts = [a for a in accs if a.type.value != "credit"]
-            credit_accounts = [a for a in accs if a.type.value == "credit"]
+            st.error("Categoria 'Pgto. de fatura' nao encontrada. Verifique a seed.")
+            return
 
-            if not bank_accounts or not credit_accounts:
-                st.warning("Você precisa ter pelo menos 1 conta banco e 1 conta crédito (ex: Santander Crédito).")
-            else:
-                b1, b2, b3 = st.columns(3)
-                with b1:
-                    origem = st.selectbox("Conta origem (banco)", [f"{a.name}" for a in bank_accounts])
-                with b2:
-                    destino = st.selectbox("Conta destino (crédito)", [f"{a.name}" for a in credit_accounts])
-                with b3:
-                    valor = st.number_input("Valor do pagamento", value=0.0, step=50.0)
+        bank_accounts = [a for a in accs if a.type.value != "credit"]
+        credit_accounts = [a for a in accs if a.type.value == "credit"]
 
-                pdata = st.date_input("Data do pagamento", value=date.today(), key="pay_date")
-                desc = st.text_input("Descrição", value="Pgto. de fatura", key="pay_desc")
+        if not bank_accounts or not credit_accounts:
+            st.warning("Voce precisa ter pelo menos 1 conta banco e 1 conta credito.")
+            return
 
-                if st.button("Gerar pagamento (2 lançamentos)"):
-                    if valor <= 0:
-                        st.error("Valor precisa ser > 0.")
-                    else:
-                        origem_id = acc_map[origem]
-                        destino_id = acc_map[destino]
+        acc_map = {a.name: a.id for a in accs}
 
-                        create_transaction(
-                            dt=pdata,
-                            amount=-round(float(valor), 2),
-                            description=desc,
-                            account_id=origem_id,
-                            category_id=cat_fatura_id,
-                            owner="petrus",
-                            paid_by="petrus",
-                            split_mode="none",
-                            card_label=None,
-                        )
-                        create_transaction(
-                            dt=pdata,
-                            amount=+round(float(valor), 2),
-                            description=desc,
-                            account_id=destino_id,
-                            category_id=cat_fatura_id,
-                            owner="petrus",
-                            paid_by="petrus",
-                            split_mode="none",
-                            card_label=None,
-                        )
-                        st.success("Pagamento gerado (banco -X, crédito +X).")
-    # ----------------------------------
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            origem = st.selectbox("Conta origem (banco)", [a.name for a in bank_accounts])
+        with c2:
+            destino = st.selectbox("Conta destino (credito)", [a.name for a in credit_accounts])
+        with c3:
+            valor = st.number_input("Valor do pagamento", value=0.0, step=50.0)
 
-    # ==============================
-    st.divider()
-    # ==============================
+        pdata = st.date_input("Data do pagamento", value=date.today(), key="pay_date")
+        desc = st.text_input("Descricao", value="Pgto. de fatura", key="pay_desc")
 
-    # -------- Editar transações --------
-    st.subheader("Editar ou excluir transações")
-    with st.expander("Abrir edição de transações"):
+        if not st.button("Gerar pagamento (2 lancamentos)"):
+            return
+
+        if valor <= 0:
+            st.error("Valor precisa ser > 0.")
+            return
+
+        origem_id = acc_map[origem]
+        destino_id = acc_map[destino]
+
+        # Lançamento 1: saída da conta bancária.
+        create_transaction(
+            dt=pdata,
+            amount=-round(float(valor), 2),
+            description=desc,
+            account_id=origem_id,
+            category_id=cat_fatura_id,
+            owner="petrus",
+            paid_by="petrus",
+            split_mode="none",
+            card_label=None,
+        )
+        # Lançamento 2: entrada na conta de crédito para abater fatura.
+        create_transaction(
+            dt=pdata,
+            amount=+round(float(valor), 2),
+            description=desc,
+            account_id=destino_id,
+            category_id=cat_fatura_id,
+            owner="petrus",
+            paid_by="petrus",
+            split_mode="none",
+            card_label=None,
+        )
+        st.success("Pagamento gerado (banco -X, credito +X).")
+
+
+def render_transaction_editor(accs: list, cats: list) -> None:
+    """Lista, seleciona e permite atualizar/excluir transações existentes."""
+    st.subheader("Editar ou excluir transacoes")
+    with st.expander("Abrir edicao de transacoes"):
         filter_labels = {"todos": "Todos"} | OWNER_LABELS
 
         f1, f2, f3 = st.columns(3)
         with f1:
-            start = st.date_input("Filtro início", value=date(date.today().year, date.today().month, 1), key="fstart")
+            start = st.date_input(
+                "Filtro inicio",
+                value=date(date.today().year, date.today().month, 1),
+                key="fstart",
+            )
         with f2:
             end = st.date_input("Filtro fim", value=date.today(), key="fend")
         with f3:
@@ -709,24 +688,25 @@ elif page == PAGE_LABELS["trans"]:
         show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
         show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-        tx_list_ui = format_df(
-            show_df,
-            rename=COL_LABELS,
-            hide=["id", "account_id", "category_id"],
-        )
+        tx_list_ui = format_df(show_df, rename=COL_LABELS, hide=["id", "account_id", "category_id"])
         print_df(tx_list_ui, width="stretch", hide_index=True)
 
         df_label = df.copy()
         df_label["label"] = (
-            "ID " + df_label["id"].astype(str) + " | "
-            + df_label["date"].astype(str) + " | "
-            + df_label["amount"].map(lambda x: brl(float(x))) + " | "
-            + df_label["category"].astype(str) + " | "
+            "ID "
+            + df_label["id"].astype(str)
+            + " | "
+            + df_label["date"].astype(str)
+            + " | "
+            + df_label["amount"].map(lambda x: brl(float(x)))
+            + " | "
+            + df_label["category"].astype(str)
+            + " | "
             + df_label["description"].astype(str).str.slice(0, 40)
         )
 
         selected_label = st.selectbox(
-            "Selecionar transação para editar",
+            "Selecionar transacao para editar",
             options=df_label["label"].tolist(),
             key="selected_tx_label",
         )
@@ -737,19 +717,17 @@ elif page == PAGE_LABELS["trans"]:
             st.session_state.last_selected_tx_id = None
 
         if st.session_state.last_selected_tx_id != tx_id:
+            # Ao trocar a seleção, sincroniza os campos de edição no session_state.
             row = df[df["id"] == tx_id].iloc[0]
-
             st.session_state.edt_date = row["date"]
             st.session_state.edt_owner = row["owner"]
             st.session_state.edt_paid_by = row["paid_by"]
             st.session_state.edt_split = row["split_mode"]
             st.session_state.edt_amount = float(row["amount"])
             st.session_state.edt_desc = str(row["description"])
-
             st.session_state.edt_acc = row["account"]
             st.session_state.edt_cat = str(row["category"])
             st.session_state.edt_card = str(row["card_label"])
-
             st.session_state.last_selected_tx_id = tx_id
         else:
             row = df[df["id"] == tx_id].iloc[0]
@@ -759,24 +737,21 @@ elif page == PAGE_LABELS["trans"]:
         acc_names = [a.name for a in accs]
         cat_names = [c.name for c in cats]
 
-        def is_credit_account_edit(account_name: str) -> bool:
-            acc = next((a for a in accs if a.name == account_name), None)
-            return bool(acc and acc.type.value == "credit")
-
         row_amount = float(row["amount"])
         row_cat_type = row.get("category_type", "")
+        # Tipo é informativo neste formulário (não editável).
         if row_cat_type == "transfer":
-            tipo_edit_ui = "Transferência"
+            tipo_edit_ui = tipo_label_for("transfer")
         elif row_amount < 0:
-            tipo_edit_ui = "Despesa"
+            tipo_edit_ui = tipo_label_for("expense")
         else:
-            tipo_edit_ui = "Entrada"
+            tipo_edit_ui = tipo_label_for("income")
 
         st.radio(
             "Tipo",
-            options=["Despesa", "Entrada", "Transferência"],
+            options=list(TIPO_LABELS.keys()),
             horizontal=True,
-            index=["Despesa", "Entrada", "Transferência"].index(tipo_edit_ui),
+            index=list(TIPO_LABELS.keys()).index(tipo_edit_ui),
             disabled=True,
         )
 
@@ -788,15 +763,14 @@ elif page == PAGE_LABELS["trans"]:
 
         er3c1, er3c2, er3c3 = st.columns([3, 2, 1])
         with er3c1:
-            edt_desc = st.text_input("Descrição", key="edt_desc")
+            edt_desc = st.text_input("Descricao", key="edt_desc")
         with er3c2:
             edt_cat = st.selectbox("Categoria", cat_names, key="edt_cat")
         with er3c3:
             selected_acc_name = st.session_state.get("edt_acc", row["account"])
-            card_enabled = is_credit_account_edit(selected_acc_name)
-
+            card_enabled = is_credit_account(accs, selected_acc_name)
             edt_card = st.text_input(
-                "Final do Cartão",
+                "Final do Cartao",
                 key="edt_card",
                 disabled=not card_enabled,
                 help="Opcional (ex: 9124).",
@@ -807,7 +781,7 @@ elif page == PAGE_LABELS["trans"]:
             edt_acc = st.selectbox("Conta", acc_names, key="edt_acc")
         with er4c2:
             edt_owner = st.selectbox(
-                "De quem é",
+                "De quem e",
                 options=list(OWNER_LABELS.keys()),
                 format_func=fmt_owner,
                 key="edt_owner",
@@ -821,13 +795,13 @@ elif page == PAGE_LABELS["trans"]:
             )
         with er4c4:
             edt_split = st.selectbox(
-                "Divisão",
+                "Divisao",
                 options=list(SPLIT_LABELS.keys()),
                 format_func=fmt_split,
                 key="edt_split",
             )
 
-        b1, b2, b3 = st.columns([1, 3, 1])
+        b1, _, b3 = st.columns([1, 3, 1])
         with b1:
             do_update = st.button("Atualizar", type="primary")
         with b3:
@@ -836,7 +810,9 @@ elif page == PAGE_LABELS["trans"]:
         if do_update:
             acc_id = next(a.id for a in accs if a.name == edt_acc)
             cat_id = next(c.id for c in cats if c.name == edt_cat)
-            card_to_save = (str(edt_card).strip() or None) if is_credit_account_edit(edt_acc) else None
+            card_to_save = (
+                (str(edt_card).strip() or None) if is_credit_account(accs, edt_acc) else None
+            )
 
             update_transaction(
                 int(tx_id),
@@ -856,27 +832,49 @@ elif page == PAGE_LABELS["trans"]:
 
         if do_delete:
             delete_transaction(int(tx_id))
-            st.warning("Excluído!")
+            st.warning("Excluido!")
             st.session_state.last_selected_tx_id = None
             st.rerun()
 
 
-# -------- Config --------
-elif page == PAGE_LABELS["config"]:
+def render_transactions_page() -> None:
+    """Página de transações: lançamento, pagamento de fatura e edição."""
+    accs = list_accounts()
+    cats = list_categories()
 
+    if not accs or not cats:
+        st.warning("Crie ao menos 1 conta e 1 categoria na aba Config.")
+        st.stop()
+
+    render_new_transaction_form(accs, cats)
+    st.divider()
+    render_invoice_payment(accs, cats)
+    st.divider()
+    render_transaction_editor(accs, cats)
+
+
+def render_config_page() -> None:
+    """Página de configuração: contas, ajuste de saldo e categorias."""
     st.subheader("Contas")
     accs = list_accounts()
+
     if accs:
-        df_acc = pd.DataFrame([a.model_dump() for a in accs])[["id", "name", "owner", "type", "initial_balance"]]
+        df_acc = pd.DataFrame([a.model_dump() for a in accs])[
+            ["id", "name", "owner", "type", "initial_balance"]
+        ]
         df_acc["owner"] = df_acc["owner"].map(lambda x: OWNER_LABELS.get(x, x))
-        COL_ACC_PT = {
-            "id":              "ID",
-            "name":            "Conta",
-            "owner":           "Owner",
-            "type":            "Tipo",
+        col_acc_pt = {
+            "id": "ID",
+            "name": "Conta",
+            "owner": "Owner",
+            "type": "Tipo",
             "initial_balance": "Saldo inicial (R$)",
         }
-        print_df(format_df(df_acc, rename=COL_ACC_PT, hide=["id", "type", "owner"]), width="stretch", hide_index=True)
+        print_df(
+            format_df(df_acc, rename=col_acc_pt, hide=["id", "type", "owner"]),
+            width="stretch",
+            hide_index=True,
+        )
 
     with st.expander("Adicionar conta"):
         name = st.text_input("Nome da conta", value="")
@@ -890,13 +888,11 @@ elif page == PAGE_LABELS["config"]:
         if st.button("Criar conta"):
             if name.strip():
                 create_account(name.strip(), owner_id, typ, 0.0)
-                st.success("Conta criada! Recarregue a página se necessário.")
+                st.success("Conta criada! Recarregue a pagina se necessario.")
             else:
                 st.error("Informe um nome.")
 
-    # =========================
     st.divider()
-    # =========================
 
     st.subheader("Ajuste de saldo")
 
@@ -904,23 +900,30 @@ elif page == PAGE_LABELS["config"]:
         st.warning("Crie uma conta primeiro.")
         st.stop()
 
-    acc_label_to_id = {f"{a.name}": a.id for a in accs}
+    acc_label_to_id = {a.name: a.id for a in accs}
     acc_choice = st.selectbox("Conta para ajustar", list(acc_label_to_id.keys()))
     acc_id = acc_label_to_id[acc_choice]
     current = current_balance_for_account(acc_id)
 
     st.caption(f"Saldo calculado atual dessa conta: **{brl(current)}**")
 
-    target = st.number_input("Qual saldo você quer que essa conta fique AGORA?", value=float(current), step=50.0)
+    target = st.number_input(
+        "Qual saldo voce quer que essa conta fique AGORA?",
+        value=float(current),
+        step=50.0,
+    )
 
     adj_cat_id = get_category_id_by_name("Ajuste de saldo ⚖️")
     if adj_cat_id is None:
-        st.error("Categoria 'Ajuste de saldo' não existe (seed falhou?).")
+        # Fallback para cenários onde o nome da categoria varia levemente.
+        adj_cat_id = next((c.id for c in list_categories() if "Ajuste de saldo" in c.name), None)
+    if adj_cat_id is None:
+        st.error("Categoria 'Ajuste de saldo' nao existe (seed falhou?).")
     else:
         if st.button("Criar ajuste"):
             delta = float(target) - float(current)
             if abs(delta) < 0.00001:
-                st.info("Já está batendo. Nenhum ajuste necessário.")
+                st.info("Ja esta batendo. Nenhum ajuste necessario.")
             else:
                 create_transaction(
                     dt=date.today(),
@@ -935,24 +938,53 @@ elif page == PAGE_LABELS["config"]:
                 )
                 st.success(f"Ajuste criado: {brl(delta)}")
 
-    # ==============================
     st.divider()
-    # ==============================
 
     st.subheader("Categorias")
 
     cats = list_categories()
     if cats:
         df_cat = pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]]
-        COL_CAT_PT = {"id": "ID", "name": "Categoria", "type": "Tipo"}
-        print_df(format_df(df_cat, rename=COL_CAT_PT, hide=["id"]), width="stretch", hide_index=True)
+        col_cat_pt = {"id": "ID", "name": "Categoria", "type": "Tipo"}
+        print_df(format_df(df_cat, rename=col_cat_pt, hide=["id"]), width="stretch", hide_index=True)
 
     with st.expander("Adicionar categoria"):
         cname = st.text_input("Nome da categoria", value="")
-        ctype = st.selectbox("Tipo da categoria", ["income", "expense", "investment", "transfer"], index=1)
+        ctype = st.selectbox(
+            "Tipo da categoria",
+            ["income", "expense", "investment", "transfer"],
+            index=1,
+        )
         if st.button("Criar categoria"):
             if cname.strip():
                 create_category(cname.strip(), ctype)
-                st.success("Categoria criada! Recarregue a página se necessário.")
+                st.success("Categoria criada! Recarregue a pagina se necessario.")
             else:
                 st.error("Informe um nome.")
+
+
+def main() -> None:
+    """Ponto de entrada da aplicação."""
+    # Inicialização global (db + seed) antes de renderizar a UI.
+    bootstrap()
+    st.set_page_config(page_title=PAGE_LABELS["title"], layout="wide")
+
+    today = date.today()
+
+    st.title(PAGE_LABELS["title"])
+    page = st.sidebar.radio(
+        PAGE_LABELS["nav"],
+        [PAGE_LABELS["dash"], PAGE_LABELS["trans"], PAGE_LABELS["config"]],
+    )
+
+    # Roteamento simples por label da navegação lateral.
+    if page == PAGE_LABELS["dash"]:
+        render_dashboard_page(today)
+    elif page == PAGE_LABELS["trans"]:
+        render_transactions_page()
+    elif page == PAGE_LABELS["config"]:
+        render_config_page()
+
+
+if __name__ == "__main__":
+    main()
