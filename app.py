@@ -19,6 +19,7 @@ from datetime import date
 
 import pandas as pd
 import streamlit as st
+
 import plotly.express as px
 
 from src.config import (
@@ -184,8 +185,28 @@ def filtra_período(tx_df: pd.DataFrame, mode: str = "cash") -> None:
         fatura = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
         st.metric("Fatura atual", brl(float(abs(fatura))))
 
+    # ---- Gastos por categoria ----
+    st.subheader("Gastos por categoria no período")
+    by_cat = (
+        tx_df[(tx_df["amount"] < 0) & (tx_df["category_type"] != "transfer")]
+        .groupby("category", as_index=False)["amount"]
+        .sum()
+        .sort_values("amount")
+    )
+
+    if by_cat.empty:
+        st.caption("Sem gastos (excluindo transferências) no período.")
+
+    else:
+        by_cat["amount"] = by_cat["amount"].abs()
+        plot_donut_categories(
+            by_cat,
+            name_col="category",
+            value_col="amount",
+        )                 
+    
     # Tabela detalhada do período com labels de apresentação.
-    st.subheader("Transacoes no período")
+    st.subheader("Transações no período")
     show_df = tx_df.copy()
 
     if "owner" in show_df.columns:
@@ -202,24 +223,7 @@ def filtra_período(tx_df: pd.DataFrame, mode: str = "cash") -> None:
         rename=COL_LABELS,
         hide=["id", "account_id", "category_id", "account_type", "category_type"],
     )
-    print_df(tx_ui, width="stretch", hide_index=True)
-
-    # Agregado por categoria: apenas despesas e exclui transferências.
-    st.subheader("Gastos por categoria no período")
-    by_cat = (
-        tx_df[(tx_df["amount"] < 0) & (tx_df["category_type"] != "transfer")]
-        .groupby("category", as_index=False)["amount"]
-        .sum()
-        .sort_values("amount")
-    )
-
-    if by_cat.empty:
-        st.caption("Sem gastos (excluindo transferencias) no período.")
-        return
-
-    by_cat["amount"] = by_cat["amount"].abs()
-    by_cat_ui = format_df(by_cat, rename=COL_LABELS, hide=["account_id"])
-    print_df(by_cat_ui, width="stretch", hide_index=True)
+    print_df(tx_ui, width="stretch", hide_index=True)                  
 
 
 # --------------------------------
@@ -283,6 +287,71 @@ def plot_donut_accounts(
         font=dict(size=24),
         x=0.5,
         y=0.5
+    )
+
+    fig.update_layout(
+        title      = title,
+        height     = 300,
+        width      = 500,
+        margin     = dict(t=0, b=20, l=100, r=0),
+        showlegend = True,
+    )
+
+    st.plotly_chart(fig, use_container_width=False)
+
+
+def plot_donut_categories(
+    df: pd.DataFrame,
+    name_col: str = "category",
+    value_col: str = "amount",
+    title: str = "",
+):
+    if df.empty:
+        st.info("Sem dados para exibir.")
+        return
+
+    plot_df = df.copy()
+    plot_df = plot_df[plot_df[value_col] != 0]
+
+    if plot_df.empty:
+        st.info("Todas as categorias estão zeradas.")
+        return
+
+    plot_df = plot_df.sort_values(name_col)
+    total = plot_df[value_col].sum()
+
+    # COLORS = [
+    #     "#F59E0B",  # Alimentação
+    #     "#06B6D4",  # Moradia
+    #     "#EF4444",  # Taxas
+    #     "#10B981",  # Transporte
+    #     "#4F46E5",  # Viagem
+    #     "#8B5CF6",
+    #     "#F97316",
+    #     "#14B8A6",
+    # ]
+
+    fig = px.pie(
+        plot_df,
+        names=name_col,
+        values=value_col,
+        hole=0.60,
+        # color_discrete_sequence=COLORS,
+    )
+
+    fig.update_traces(
+        sort=False,
+        texttemplate="R$ %{value:.2f}",
+        textposition="outside",
+        hovertemplate="<b>%{label}</b><br>Gasto: R$ %{value:.2f}<extra></extra>",
+    )
+
+    fig.add_annotation(
+        text=f"<b>{brl(total)}</b><br>Total",
+        showarrow=False,
+        font=dict(size=18),
+        x=0.5,
+        y=0.5,
     )
 
     fig.update_layout(
