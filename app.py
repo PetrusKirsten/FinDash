@@ -57,9 +57,14 @@ def bootstrap() -> None:
 # ----- Funções utilitárias para formatação -----
 # -----------------------------------------------
 
-def brl(x: float) -> str:
+def fmt_brl(x: float) -> str:
     """Formata valor numérico para moeda BRL com separadores pt-BR."""
     return f"R$ {x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def fmt_month(d: date) -> str:
+    meses_pt = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+    return f"{meses_pt[d.month - 1]} / {d.year}"
 
 
 def fmt_owner(k: str) -> str:
@@ -77,7 +82,7 @@ def fmt_split(k: str) -> str:
     return SPLIT_LABELS.get(k, k)
 
 
-def format_df(
+def fmt_df(
     df: pd.DataFrame,
     rename: dict | None = None,
     hide: list[str] | None = None,
@@ -119,6 +124,11 @@ def month_first(d: date) -> date:
     return date(d.year, d.month, 1)
 
 
+def month_last(d: date) -> date:
+    last_day = calendar.monthrange(d.year, d.month)[1]
+    return date(d.year, d.month, last_day)
+
+
 def add_months(d: date, months: int) -> date:
     """Soma meses preservando o dia quando possível (com ajuste para fim de mês)."""
     y = d.year + (d.month - 1 + months) // 12
@@ -144,7 +154,7 @@ def get_fatura(d: date, start_day: int = 4, end_day: int = 3) -> tuple[date, dat
     return start, end
 
 
-def compras_entre(start: date, end: date) -> str:
+def formata_data(start: date, end: date) -> str:
     """Texto amigável do intervalo de compras do ciclo de fatura."""
     return f"{start.strftime('%d/%m/%Y')} e {end.strftime('%d/%m/%Y')}"
 
@@ -178,13 +188,13 @@ def filtra_periodo(tx_df: pd.DataFrame, mode: str = "cash") -> None:
         saldo = income + expense
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Entradas", brl(float(income)))
-        c2.metric("Saídas", brl(float(abs(expense))))
-        c3.metric("Saldo do período", brl(float(saldo)))
+        c1.metric("Entradas", fmt_brl(float(income)))
+        c2.metric("Saídas", fmt_brl(float(abs(expense))))
+        c3.metric("Saldo do período", fmt_brl(float(saldo)))
 
     elif mode == "credit":
         fatura = tx_df.loc[tx_df["amount"] < 0, "amount"].sum()
-        st.metric("Fatura atual", brl(float(abs(fatura))))
+        st.metric("Fatura atual", fmt_brl(float(abs(fatura))))
 
     # ---- Gastos por categoria ----
     st.subheader("Gastos por categoria no período")
@@ -219,7 +229,7 @@ def filtra_periodo(tx_df: pd.DataFrame, mode: str = "cash") -> None:
     if "split_mode" in show_df.columns:
         show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-    tx_ui = format_df(
+    tx_ui = fmt_df(
         show_df,
         rename=COL_LABELS,
         hide=["id", "account_id", "category_id", "account_type", "category_type"],
@@ -282,7 +292,7 @@ def plot_accounts(
 
     #  Total no centro do donut
     fig.add_annotation(
-        text=f"<b>{brl(total)}</b>",
+        text=f"<b>{fmt_brl(total)}</b>",
         showarrow=False,
         font=dict(size=24),
         x=0.5,
@@ -349,7 +359,7 @@ def plot_credit(
     )
 
     fig.add_annotation(
-        text=f"<b>{brl(total)}</b>",
+        text=f"<b>{fmt_brl(total)}</b>",
         showarrow=False,
         font=dict(size=24),
         x=0.5,
@@ -418,7 +428,7 @@ def plot_categories(
 
     fig.add_annotation(
         # text=f"Total<br><b>{brl(total)}</b>",
-        text=f"<b>{brl(total)}</b>",
+        text=f"<b>{fmt_brl(total)}</b>",
         showarrow=False,
         font=dict(size=18),
         x=0.5,
@@ -440,7 +450,7 @@ def plot_categories(
 # ----- Funções para renderização das páginas -----
 # -------------------------------------------------
 
-def render_dashboard_page(today: date) -> None:
+def page_dashboard(today: date) -> None:
     """Página inicial: visão consolidada de caixa + cartões de crédito."""
 
     # Bloco 1: caixa (contas não-crédito).
@@ -467,18 +477,38 @@ def render_dashboard_page(today: date) -> None:
 
     # Filtro expandível para análise de gastos de caixa no período.
     with st.expander("Ver gastos"):
-        default_start = date(today.year, today.month, 1)
+
         filter_labels = {"todos": "Todos"} | OWNER_LABELS
 
-        c1, c2 = st.columns(2)
-        with c1:
-            cash_start = st.date_input("De", value=default_start, key="cash_start")
-        
-        with c2:
-            cash_end = st.date_input("Até", value=today, key="cash_end")
+        if "cash_month_offset" not in st.session_state:
+            st.session_state["cash_month_offset"] = 0
 
-        c3, c4, c5 = st.columns(3)        
-        with c3:    
+        nav1, nav2, nav3, nav4 = st.columns([3, 1, 1, 1])
+
+        ref_date   = add_months(today, int(st.session_state["cash_month_offset"]))
+        cash_start = month_first(ref_date)
+        cash_end   = month_last(ref_date)
+
+        nav1.metric("Mês selecionado:", fmt_month(ref_date))
+        
+        with nav2:
+            if st.button("◀ Anterior", key="cash_prev"):
+                st.session_state["cash_month_offset"] -= 1
+                st.rerun()
+        
+        with nav3:
+            if st.button("⟳ Atual", key="cash_now"):
+                st.session_state["cash_month_offset"] = 0
+                st.rerun()
+        
+        with nav4:
+            if st.button("Próximo ▶", key="cash_next"):
+                st.session_state["cash_month_offset"] += 1
+                st.rerun()
+
+        c1, c2, c3 = st.columns(3)
+        
+        with c1:
             cash_owner = st.selectbox(
                 COL_LABELS["owner"],
                 options=list(filter_labels.keys()),
@@ -494,7 +524,7 @@ def render_dashboard_page(today: date) -> None:
         cats_dash = list_categories()
         cash_categories = ["Todas"] + sorted([c.name for c in cats_dash])
 
-        with c4:
+        with c2:
             cash_account = st.selectbox(
                 "Conta",
                 options=["Todas"] + cash_accounts,
@@ -502,7 +532,7 @@ def render_dashboard_page(today: date) -> None:
                 key="cash_account_filter",
             )
         
-        with c5:
+        with c3:
             cash_category = st.selectbox(
                 "Categoria",
                 options=cash_categories,
@@ -512,10 +542,8 @@ def render_dashboard_page(today: date) -> None:
 
         tx_cash_all = list_transactions(start=cash_start, end=cash_end, owner=cash_owner)
 
-        # filtra apenas contas NÃO-crédito
         tx_cash = tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)] if not tx_cash_all.empty else tx_cash_all
 
-        # filtros extras
         if not tx_cash.empty and cash_account != "Todas":
             tx_cash = tx_cash[tx_cash["account"] == cash_account]
 
@@ -534,26 +562,28 @@ def render_dashboard_page(today: date) -> None:
         st.session_state["cc_cycle_offset"] = 0
 
     nav1, nav2, nav3, nav4 = st.columns([3, 1, 1, 1])
+
     ref_date = add_months(today, int(st.session_state["cc_cycle_offset"]))
     cycle_start, cycle_end = get_fatura(ref_date, start_day=4, end_day=3)
-    cycle_label = f"{MESES_PT[cycle_start.month - 1]}/{cycle_start.year}"
 
-    with nav1:
-        st.markdown(f"**Faturas de:** {cycle_label}")
+    nav1.metric("Faturas de:", fmt_month(ref_date))
+    
     with nav2:
-        if st.button("Anterior", key="cc_prev"):
+        if st.button("◀ Anterior", key="cc_prev"):
             st.session_state["cc_cycle_offset"] -= 1
             st.rerun()
+    
     with nav3:
-        if st.button("Atual", key="cc_now"):
+        if st.button("⟳ Atual", key="cc_now"):
             st.session_state["cc_cycle_offset"] = 0
             st.rerun()
+    
     with nav4:
-        if st.button("Próximo", key="cc_next"):
+        if st.button("Próximo ▶", key="cc_next"):
             st.session_state["cc_cycle_offset"] += 1
             st.rerun()
 
-    st.caption(f"Compras entre: {compras_entre(cycle_start, cycle_end)}")
+    st.caption(f"Compras entre: {formata_data(cycle_start, cycle_end)}")
 
     tx_cycle_all = list_transactions(start=cycle_start, end=cycle_end, owner="todos")
     tx_credit_cycle = (
@@ -614,7 +644,7 @@ def render_dashboard_page(today: date) -> None:
         filtra_periodo(tx_cc, mode="credit")
 
 
-def render_new_transaction_form(accs: list, cats: list) -> None:
+def form_new_transaction(accs: list, cats: list) -> None:
     """Formulário principal para lançamento de transações."""
     st.subheader("Lançar transação")
 
@@ -854,7 +884,7 @@ def render_new_transaction_form(accs: list, cats: list) -> None:
     st.rerun()
 
 
-def render_invoice_payment(accs: list, cats: list) -> None:
+def invoice_payment(accs: list, cats: list) -> None:
     """Fluxo auxiliar para pagamento de fatura (2 lançamentos espelhados)."""
     st.subheader("Pagar fatura")
     
@@ -929,7 +959,7 @@ def render_invoice_payment(accs: list, cats: list) -> None:
         st.success("Pagamento gerado (banco -X, crédito +X).")
 
 
-def render_transaction_editor(accs: list, cats: list) -> None:
+def editor_transaction(accs: list, cats: list) -> None:
     """Lista, seleciona e permite atualizar/excluir transações existentes."""
     st.subheader("Editar ou excluir transações")
     with st.expander("Abrir edição de transações"):
@@ -963,7 +993,7 @@ def render_transaction_editor(accs: list, cats: list) -> None:
         show_df["paid_by"] = show_df["paid_by"].map(fmt_payer)
         show_df["split_mode"] = show_df["split_mode"].map(fmt_split)
 
-        tx_list_ui = format_df(show_df, rename=COL_LABELS, hide=["id", "account_id", "category_id"])
+        tx_list_ui = fmt_df(show_df, rename=COL_LABELS, hide=["id", "account_id", "category_id"])
         print_df(tx_list_ui, width="stretch", hide_index=True)
 
         df_label = df.copy()
@@ -973,7 +1003,7 @@ def render_transaction_editor(accs: list, cats: list) -> None:
             + " | "
             + df_label["date"].astype(str)
             + " | "
-            + df_label["amount"].map(lambda x: brl(float(x)))
+            + df_label["amount"].map(lambda x: fmt_brl(float(x)))
             + " | "
             + df_label["category"].astype(str)
             + " | "
@@ -1112,7 +1142,7 @@ def render_transaction_editor(accs: list, cats: list) -> None:
             st.rerun()
 
 
-def render_transactions_page() -> None:
+def page_transactions() -> None:
     """Página de transações: lançamento, pagamento de fatura e edição."""
     accs = list_accounts()
     cats = list_categories()
@@ -1121,14 +1151,14 @@ def render_transactions_page() -> None:
         st.warning("Crie ao menos 1 conta e 1 categoria na aba Config.")
         st.stop()
 
-    render_new_transaction_form(accs, cats)
+    form_new_transaction(accs, cats)
     st.divider()  # ==============================
-    render_invoice_payment(accs, cats)
+    invoice_payment(accs, cats)
     st.divider()  # ==============================
-    render_transaction_editor(accs, cats)
+    editor_transaction(accs, cats)
 
 
-def render_config_page() -> None:
+def page_config() -> None:
     """Página de configuração: contas, ajuste de saldo e categorias."""
     st.subheader("Contas")
     accs = list_accounts()
@@ -1146,7 +1176,7 @@ def render_config_page() -> None:
             "initial_balance" : "Saldo inicial (R$)",
         }
         print_df(
-            format_df(df_acc, rename=col_acc_pt, hide=["id", "type", "owner"]),
+            fmt_df(df_acc, rename=col_acc_pt, hide=["id", "type", "owner"]),
             width="stretch",
             hide_index=True,
         )
@@ -1180,7 +1210,7 @@ def render_config_page() -> None:
     acc_id = acc_label_to_id[acc_choice]
     current = current_balance_for_account(acc_id)
 
-    st.caption(f"Saldo calculado atual dessa conta: **{brl(current)}**")
+    st.caption(f"Saldo calculado atual dessa conta: **{fmt_brl(current)}**")
 
     target = st.number_input(
         "Qual saldo voce quer que essa conta fique AGORA?",
@@ -1203,7 +1233,7 @@ def render_config_page() -> None:
                 create_transaction(
                     dt=date.today(),
                     amount=round(delta, 2),
-                    description=f"Ajuste de saldo para {brl(target)}",
+                    description=f"Ajuste de saldo para {fmt_brl(target)}",
                     account_id=acc_id,
                     category_id=adj_cat_id,
                     owner="petrus",
@@ -1211,7 +1241,7 @@ def render_config_page() -> None:
                     split_mode="none",
                     card_label=None,
                 )
-                st.success(f"Ajuste criado: {brl(delta)}")
+                st.success(f"Ajuste criado: {fmt_brl(delta)}")
 
     st.divider()  # ==============================
 
@@ -1221,7 +1251,7 @@ def render_config_page() -> None:
     if cats:
         df_cat = pd.DataFrame([c.model_dump() for c in cats])[["id", "name", "type"]]
         col_cat_pt = {"id": "ID", "name": "Categoria", "type": "Tipo"}
-        print_df(format_df(df_cat, rename=col_cat_pt, hide=["id"]), width="stretch", hide_index=True)
+        print_df(fmt_df(df_cat, rename=col_cat_pt, hide=["id"]), width="stretch", hide_index=True)
 
     with st.expander("Adicionar categoria"):
         cname = st.text_input("Nome da categoria", value="")
@@ -1259,11 +1289,11 @@ def main() -> None:
 
     # Roteamento simples por label da navegação lateral.
     if page == PAGE_LABELS["dash"]:
-        render_dashboard_page(today)
+        page_dashboard(today)
     elif page == PAGE_LABELS["trans"]:
-        render_transactions_page()
+        page_transactions()
     elif page == PAGE_LABELS["config"]:
-        render_config_page()
+        page_config()
 
 
 if __name__ == "__main__":
