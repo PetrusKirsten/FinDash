@@ -55,17 +55,19 @@ SPLIT_LABELS = {
     "other_100": "100% do outro",
 }
 
-MESES_PT = [
-    "Janeiro", 
-    "Fevereiro",
-    "Março",
-    "Abril",
-    "Maio",
-    "Junho",
-    "Julho",
-    "Agosto",
-    "Setembro",
-    "Outubro",
-    "Novembro",
-    "Dezembro"
-]
+CATEGORY_COLORS = {
+    "Alimentação 🍽️": "#DB7629",
+    "Carro 🚗":       "#007E54",
+    "Casamento 💍":   "#63002E",
+    "Moradia 🏠":     "#0B60C0",
+    "Outros 📦":      "#D0D0D0",
+    "Pessoal 👤":     "#4F46E5",
+    "Presentes 🎁":   "#C94690",
+    "Ratos 🐀":       "#DB81C7",
+    "Saúde ⚕️":       "#34D5CA",
+    "Taxas 📉":       "#EF4444",
+    "Transporte 🚗":  "#007E54",
+    "Viagem ✈️":      "#34A7FF",
+    "Pgto. de fatura 💳": "#007E54",
+    
+}

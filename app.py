@@ -23,9 +23,9 @@ import streamlit as st
 import plotly.express as px
 
 from src.config import (
+    CATEGORY_COLORS,
     COL_LABELS,
-    CREDIT_LABELS,
-    MESES_PT,
+    CATEGORY_COLORS,
     OWNER_LABELS,
     PAGE_LABELS,
     PAYER_LABELS,
@@ -396,27 +396,14 @@ def plot_categories(
 
     plot_df = plot_df.sort_values(name_col)
     total = plot_df[value_col].sum()
-
-    COLORS = [
-        "#F59E0B",  # Alimentação
-        "#B00000",  # Carro
-        "#A21B5A",  # Casamento
-        "#06B6D4",  # Moradia
-        "#D0D0D0",  # Outros
-        "#4F46E5",  # Pessoal
-        "#C94690",  # Presentes
-        "#DB81C7",  # Ratos
-        "#34D5CA",  # Saúde
-        "#007E54",  # Transporte
-        "#EF4444",  # Taxas
-    ]
-
+    
     fig = px.pie(
         plot_df,
         names=name_col,
         values=value_col,
         hole=0.60,
-        color_discrete_sequence=COLORS,
+        color=name_col,
+        color_discrete_map=CATEGORY_COLORS,
     )
 
     fig.update_traces(
