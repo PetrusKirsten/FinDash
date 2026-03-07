@@ -52,6 +52,7 @@ def bootstrap() -> None:
     init_db()
     seed_defaults()
 
+
 # -----------------------------------------------
 # ----- Funções utilitárias para formatação -----
 # -----------------------------------------------
@@ -159,7 +160,7 @@ def tipo_label_for(tipo_value: str) -> str:
     return next((label for label, value in TIPO_LABELS.items() if value == tipo_value), tipo_value)
 
 
-def filtra_período(tx_df: pd.DataFrame, mode: str = "cash") -> None:
+def filtra_periodo(tx_df: pd.DataFrame, mode: str = "cash") -> None:
     """Renderiza resumo e tabelas de transações para um período.
 
     Modos:
@@ -199,7 +200,7 @@ def filtra_período(tx_df: pd.DataFrame, mode: str = "cash") -> None:
 
     else:
         by_cat["amount"] = by_cat["amount"].abs()
-        plot_donut_categories(
+        plot_categories(
             by_cat,
             name_col="category",
             value_col="amount",
@@ -226,11 +227,11 @@ def filtra_período(tx_df: pd.DataFrame, mode: str = "cash") -> None:
     print_df(tx_ui, width="stretch", hide_index=True)                  
 
 
-# --------------------------------
-# Funções auxiliares para os plots
-# --------------------------------
+# -------------------------------------------- 
+# ----- Funções auxiliares para os plots -----
+# --------------------------------------------
 
-def plot_donut_accounts(
+def plot_accounts(
     df: pd.DataFrame,
     name_col: str = "account",
     value_col: str = "balance",
@@ -252,8 +253,8 @@ def plot_donut_accounts(
     total = plot_df[value_col].sum()
 
     COLORS = [
-        "#FEC937",
-        "#B02C2C",
+        "#FEC937",  # BB| Mel 
+        "#B02C2C",  # Santander | PP
 
 
         "#EF4444",
@@ -281,8 +282,7 @@ def plot_donut_accounts(
 
     #  Total no centro do donut
     fig.add_annotation(
-        # text=f"Total<b><br>R$ {total:.2f}</b>",
-        text=f"<b>{brl(total)}</b><br>Total",
+        text=f"<b>{brl(total)}</b>",
         showarrow=False,
         font=dict(size=24),
         x=0.5,
@@ -293,14 +293,81 @@ def plot_donut_accounts(
         title      = title,
         height     = 300,
         width      = 500,
-        margin     = dict(t=0, b=20, l=100, r=0),
+        margin     = dict(t=0, b=20, l=0, r=0),
         showlegend = True,
     )
 
     st.plotly_chart(fig, use_container_width=False)
 
 
-def plot_donut_categories(
+def plot_credit(
+    df: pd.DataFrame,
+    name_col: str = "cartao",
+    value_col: str = "fatura",
+    title: str = "",
+):
+    if df.empty:
+        st.info("Sem dados para exibir.")
+        return
+
+    plot_df = df.copy()
+    plot_df = plot_df[plot_df[value_col] != 0]
+
+    if plot_df.empty:
+        st.info("Nenhuma fatura em aberto neste ciclo.")
+        return
+
+    # ordem alfabética da legenda / cores
+    plot_df = plot_df.sort_values(by=name_col, ascending=True)
+
+    total = plot_df[value_col].sum()
+
+    COLORS = [
+        "#B02C2C",  # Santander | Crédito
+
+        "#4F46E5",
+        "#06B6D4",
+        "#10B981",
+        "#F59E0B",
+        "#8B5CF6",
+    ]
+
+    fig = px.pie(
+        plot_df,
+        names=name_col,
+        values=value_col,
+        hole=0.60,
+        color_discrete_sequence=COLORS,
+        category_orders={name_col: plot_df[name_col].tolist()},
+    )
+
+    fig.update_traces(
+        sort=False,
+        texttemplate="R$ %{value:.2f}",
+        textposition="inside",
+        hovertemplate="<b>%{label}</b><br>Fatura: R$ %{value:.2f}<extra></extra>",
+    )
+
+    fig.add_annotation(
+        text=f"<b>{brl(total)}</b>",
+        showarrow=False,
+        font=dict(size=24),
+        x=0.5,
+        y=0.5,
+    )
+
+    fig.update_layout(
+        title      = title,
+        height     = 300,
+        width      = 500,
+        margin     = dict(t=0, b=20, l=0, r=0),
+        showlegend = True,
+    )
+
+    st.plotly_chart(fig, use_container_width=False)
+
+
+def plot_categories(
     df: pd.DataFrame,
     name_col: str = "category",
     value_col: str = "amount",
@@ -320,23 +387,26 @@ def plot_donut_categories(
     plot_df = plot_df.sort_values(name_col)
     total = plot_df[value_col].sum()
 
-    # COLORS = [
-    #     "#F59E0B",  # Alimentação
-    #     "#06B6D4",  # Moradia
-    #     "#EF4444",  # Taxas
-    #     "#10B981",  # Transporte
-    #     "#4F46E5",  # Viagem
-    #     "#8B5CF6",
-    #     "#F97316",
-    #     "#14B8A6",
-    # ]
+    COLORS = [
+        "#F59E0B",  # Alimentação
+        "#B00000",  # Carro
+        "#A21B5A",  # Casamento
+        "#06B6D4",  # Moradia
+        "#D0D0D0",  # Outros
+        "#4F46E5",  # Pessoal
+        "#C94690",  # Presentes
+        "#DB81C7",  # Ratos
+        "#34D5CA",  # Saúde
+        "#007E54",  # Transporte
+        "#EF4444",  # Taxas
+    ]
 
     fig = px.pie(
         plot_df,
         names=name_col,
         values=value_col,
         hole=0.60,
-        # color_discrete_sequence=COLORS,
+        color_discrete_sequence=COLORS,
     )
 
     fig.update_traces(
@@ -347,7 +417,8 @@ def plot_donut_categories(
     )
 
     fig.add_annotation(
-        text=f"<b>{brl(total)}</b><br>Total",
+        # text=f"Total<br><b>{brl(total)}</b>",
+        text=f"<b>{brl(total)}</b>",
         showarrow=False,
         font=dict(size=18),
         x=0.5,
@@ -358,7 +429,7 @@ def plot_donut_categories(
         title      = title,
         height     = 300,
         width      = 500,
-        margin     = dict(t=0, b=20, l=100, r=0),
+        margin     = dict(t=50, b=20, l=100, r=0),
         showlegend = True,
     )
 
@@ -371,6 +442,7 @@ def plot_donut_categories(
 
 def render_dashboard_page(today: date) -> None:
     """Página inicial: visão consolidada de caixa + cartões de crédito."""
+
     # Bloco 1: caixa (contas não-crédito).
     st.subheader("Caixa")
 
@@ -380,7 +452,7 @@ def render_dashboard_page(today: date) -> None:
     # Gráfico dos saldos por conta
     bal_df = balances_by_account(include_credit=False, as_of=today)
     if not bal_df.empty:
-        plot_donut_accounts(
+        plot_accounts(
             bal_df[["account", "balance"]],
             name_col="account",
             value_col="balance",
@@ -396,15 +468,17 @@ def render_dashboard_page(today: date) -> None:
     # Filtro expandível para análise de gastos de caixa no período.
     with st.expander("Ver gastos"):
         default_start = date(today.year, today.month, 1)
+        filter_labels = {"todos": "Todos"} | OWNER_LABELS
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         with c1:
             cash_start = st.date_input("De", value=default_start, key="cash_start")
         
         with c2:
-            cash_end = st.date_input("Ate", value=today, key="cash_end")
-        
-        with c3:
+            cash_end = st.date_input("Até", value=today, key="cash_end")
+
+        c3, c4, c5 = st.columns(3)        
+        with c3:    
             cash_owner = st.selectbox(
                 COL_LABELS["owner"],
                 options=list(filter_labels.keys()),
@@ -413,15 +487,45 @@ def render_dashboard_page(today: date) -> None:
                 key="cash_owner",
             )
 
-        tx_cash_all = list_transactions(start=cash_start, end=cash_end, owner=cash_owner)
-        tx_cash = (
-            tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)]
-            if not tx_cash_all.empty
-            else tx_cash_all
-        )
-        filtra_período(tx_cash, mode="cash")
+        accs_dash = list_accounts()
+        credit_ids = {a.id for a in accs_dash if a.type.value == "credit"}
+        cash_accounts = sorted([a.name for a in accs_dash if a.type.value != "credit"])
 
-    st.divider()  # ============================== 
+        cats_dash = list_categories()
+        cash_categories = ["Todas"] + sorted([c.name for c in cats_dash])
+
+        with c4:
+            cash_account = st.selectbox(
+                "Conta",
+                options=["Todas"] + cash_accounts,
+                index=0,
+                key="cash_account_filter",
+            )
+        
+        with c5:
+            cash_category = st.selectbox(
+                "Categoria",
+                options=cash_categories,
+                index=0,
+                key="cash_category_filter",
+            )
+
+        tx_cash_all = list_transactions(start=cash_start, end=cash_end, owner=cash_owner)
+
+        # filtra apenas contas NÃO-crédito
+        tx_cash = tx_cash_all[~tx_cash_all["account_id"].isin(credit_ids)] if not tx_cash_all.empty else tx_cash_all
+
+        # filtros extras
+        if not tx_cash.empty and cash_account != "Todas":
+            tx_cash = tx_cash[tx_cash["account"] == cash_account]
+
+        if not tx_cash.empty and cash_category != "Todas":
+            tx_cash = tx_cash[tx_cash["category"] == cash_category]
+
+        filtra_periodo(tx_cash, mode="cash")
+
+
+    st.divider()  # ==============================
 
     # Bloco 2: cartões de crédito com navegação de ciclo (mês anterior/atual/próximo).
     st.subheader("Cartões de crédito")
@@ -462,6 +566,7 @@ def render_dashboard_page(today: date) -> None:
     if tx_credit_cycle.empty:
         st.info("Sem transações de cartão nesse ciclo.")
         credit_ui = pd.DataFrame(columns=["cartão", "fatura"])
+    
     else:
         grp = (
             tx_credit_cycle[tx_credit_cycle["amount"] < 0]
@@ -473,16 +578,14 @@ def render_dashboard_page(today: date) -> None:
         credit_ui = grp[["cartão", "fatura"]].sort_values("cartão")
 
     total_fatura = float(credit_ui["fatura"].sum()) if not credit_ui.empty else 0.0
-    st.metric("Total", brl(total_fatura))
+    # st.metric("Total", brl(total_fatura))
 
     if not credit_ui.empty:
-        credit_ui = credit_ui.rename(
-            columns={
-                "cartão": CREDIT_LABELS.get("account", "Cartão"),
-                "fatura": "Fatura do ciclo",
-            }
+        plot_credit(
+            credit_ui,
+            name_col="cartão",
+            value_col="fatura",
         )
-        print_df(credit_ui, width="stretch", hide_index=True)
 
     with st.expander("Ver faturas"):
         c1, c2 = st.columns(2)
@@ -508,9 +611,9 @@ def render_dashboard_page(today: date) -> None:
         if cc_cartão != "todos" and not tx_cc.empty:
             tx_cc = tx_cc[tx_cc["account"] == cc_cartão]
 
-        filtra_período(tx_cc, mode="credit")
+        filtra_periodo(tx_cc, mode="credit")
 
-# ----- Form Nova Transação
+
 def render_new_transaction_form(accs: list, cats: list) -> None:
     """Formulário principal para lançamento de transações."""
     st.subheader("Lançar transação")
@@ -734,7 +837,7 @@ def render_new_transaction_form(accs: list, cats: list) -> None:
             created += 1
 
         st.success(
-            f"Parcelamento criado: {created} transações ({n_current}/{n_total} ate {n_total}/{n_total})."
+            f"Parcelamento criado: {created} transações ({n_current}/{n_total} até {n_total}/{n_total})."
         )
 
     st.session_state.last_tx = {
@@ -1135,9 +1238,9 @@ def render_config_page() -> None:
                 st.error("Informe um nome.")
 
 
-# --------------------------------------
-# Função principal para renderizar o app
-# --------------------------------------
+# --------------------------------------------------
+# ----- Função principal para renderizar o app -----
+# --------------------------------------------------
 
 def main() -> None:
     """Ponto de entrada da aplicação."""
