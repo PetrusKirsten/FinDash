@@ -14,12 +14,13 @@ from __future__ import annotations
 # - documentar claramente as regras de negócio no fluxo de UI
 # """
 
+import re
 import calendar
-from datetime import date
 
 import pandas as pd
 import streamlit as st
 
+from datetime import date
 import plotly.express as px
 
 from src.config import (
@@ -31,6 +32,7 @@ from src.config import (
     PAYER_LABELS,
     SPLIT_LABELS,
     TIPO_LABELS,
+    INSTALLMENT_RE,
 )
 from src.db import init_db
 from src.services.accounts import create_account, list_accounts
@@ -44,6 +46,7 @@ from src.services.transactions import (
     list_transactions,
     update_transaction,
 )
+
 
 # Bootstrap da aplicação: inicializa banco e dados persistentes (executa uma vez por sessão).
 @st.cache_resource
@@ -237,6 +240,85 @@ def filtra_periodo(tx_df: pd.DataFrame, mode: str = "cash") -> None:
     print_df(tx_ui, width="stretch", hide_index=True)                  
 
 
+def parse_installment(description: str) -> dict | None:
+    if not description:
+        return None
+
+    m = INSTALLMENT_RE.search(description.strip())
+    if not m:
+        return None
+
+    n = int(m.group(1))
+    total = int(m.group(2))
+    base_desc = INSTALLMENT_RE.sub("", description).strip()
+
+    return {
+        "base_description":       base_desc,
+        "current_installment":    n,
+        "total_installments":     total,
+        "remaining_installments": max(total - n, 0),
+    }
+
+
+def build_active_installments_df(tx_df: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
+    if tx_df.empty or "description" not in tx_df.columns:
+        return pd.DataFrame()
+
+    if as_of is None:
+        as_of = date.today()
+
+    rows = []
+    for _, row in tx_df.iterrows():
+        info = parse_installment(str(row["description"]))
+        if not info:
+            continue
+
+        rows.append(
+            {
+                "date": row["date"],
+                "account": row["account"],
+                "category": row["category"],
+                "owner": row["owner"],
+                "amount": abs(float(row["amount"])),
+                "base_description": info["base_description"],
+                "current_installment": info["current_installment"],
+                "total_installments": info["total_installments"],
+                "remaining_installments": info["remaining_installments"],
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+
+    # importante: considerar apenas o que já "chegou" até hoje
+    df = df[df["date"] <= as_of].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    grp_cols = ["base_description", "account", "category", "owner", "amount"]
+    df = df.sort_values(["base_description", "current_installment", "date"])
+    latest = df.groupby(grp_cols, as_index=False).tail(1).copy()
+
+    # recalcula restantes com base no estágio atual até hoje
+    latest["remaining_installments"] = (
+        latest["total_installments"] - latest["current_installment"]
+    ).clip(lower=0)
+
+    # mantém só parcelamentos ainda ativos
+    latest = latest[latest["remaining_installments"] > 0].copy()
+    if latest.empty:
+        return pd.DataFrame()
+
+    latest["next_installment"]  = latest["current_installment"] + 1
+    latest["future_commitment"] = latest["amount"] * latest["remaining_installments"]
+    latest["next_due_date"]     = latest["date"].apply(lambda d: add_months(d, 1))
+
+    latest = latest.sort_values(["next_due_date", "base_description"]).reset_index(drop=True)
+    
+    return latest
+
 # -------------------------------------------- 
 # ----- Funções auxiliares para os plots -----
 # --------------------------------------------
@@ -307,7 +389,7 @@ def plot_accounts(
         showlegend = True,
     )
 
-    st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, width='content')
 
 
 def plot_credit(
@@ -374,7 +456,7 @@ def plot_credit(
         showlegend = True,
     )
 
-    st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, width='content')
 
 
 def plot_categories(
@@ -430,7 +512,7 @@ def plot_categories(
         showlegend = True,
     )
 
-    st.plotly_chart(fig, use_container_width=False)
+    st.plotly_chart(fig, width='content')
 
 
 # -------------------------------------------------
@@ -539,10 +621,10 @@ def page_dashboard(today: date) -> None:
 
         filtra_periodo(tx_cash, mode="cash")
 
+    # ==========================================
+    st.divider()  # Bloco 2: cartões de crédito
+    # ==========================================
 
-    st.divider()  # ==============================
-
-    # Bloco 2: cartões de crédito com navegação de ciclo (mês anterior/atual/próximo).
     st.subheader("Cartões de crédito")
 
     if "cc_cycle_offset" not in st.session_state:
@@ -604,7 +686,7 @@ def page_dashboard(today: date) -> None:
             value_col="fatura",
         )
 
-    with st.expander("Ver faturas"):
+    with st.expander("Faturas"):
         c1, c2 = st.columns(2)
         with c1:
             cc_owner = st.selectbox(
@@ -630,6 +712,57 @@ def page_dashboard(today: date) -> None:
 
         filtra_periodo(tx_cc, mode="credit")
 
+    with st.expander("Parcelamentos ativos"):
+        tx_all = list_transactions(owner="todos")
+        active_installments = build_active_installments_df(tx_all, as_of=today)
+
+        if active_installments.empty:
+            st.info("Nenhum parcelamento ativo encontrado.")
+
+        else:
+            c1, c2, c3 = st.columns(3)            
+            c1.metric("Parcelamentos ativos",      int(len(active_installments)))
+            c2.metric("Parcelas restantes",        int(active_installments["remaining_installments"].sum()))
+            c3.metric("Valor futuro comprometido", fmt_brl(float(active_installments["future_commitment"].sum())))
+
+            show_df = active_installments.copy()
+            if "owner" in show_df.columns:
+                show_df["owner"] = show_df["owner"].map(fmt_owner)
+
+            show_df["parcela_atual"] = (
+                show_df["current_installment"].astype(str)
+                + "/"
+                + show_df["total_installments"].astype(str)
+            )
+
+            ui_df = show_df[
+                [
+                    "base_description",
+                    "parcela_atual",
+                    "remaining_installments",
+                    "amount",
+                    "future_commitment",
+                    "next_due_date",
+                    "account",
+                    "category",
+                    "owner",
+                ]
+            ].rename(
+                columns={
+                    "base_description": "Descrição",
+                    "parcela_atual": "Parcela",
+                    "remaining_installments": "Restantes",
+                    "amount": "Valor da parcela",
+                    "future_commitment": "Comprometido",
+                    "next_due_date": "Próxima parcela",
+                    "account": "Conta",
+                    "category": "Categoria",
+                    "owner": "De quem",
+                }
+            )
+
+            print_df(ui_df, width="stretch", hide_index=True)
+        
 
 def form_new_transaction(accs: list, cats: list) -> None:
     """Formulário principal para lançamento de transações."""

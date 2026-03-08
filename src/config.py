@@ -1,5 +1,4 @@
-# IDs internos fixos: petrus, partner, both
-# Labels exibidas: você personaliza aqui
+import re
 
 COL_LABELS = {
     "account":       "Conta",
@@ -56,18 +55,19 @@ SPLIT_LABELS = {
 }
 
 CATEGORY_COLORS = {
-    "Alimentação 🍽️": "#DB7629",
-    "Carro 🚗":       "#007E54",
-    "Casamento 💍":   "#63002E",
-    "Moradia 🏠":     "#0B60C0",
-    "Outros 📦":      "#D0D0D0",
-    "Pessoal 👤":     "#4F46E5",
-    "Presentes 🎁":   "#C94690",
-    "Ratos 🐀":       "#DB81C7",
-    "Saúde ⚕️":       "#34D5CA",
-    "Taxas 📉":       "#EF4444",
-    "Transporte 🚗":  "#007E54",
-    "Viagem ✈️":      "#34A7FF",
-    "Pgto. de fatura 💳": "#007E54",
-    
+    "Alimentação 🍽️":     "#DB7629",
+    "Carro 🚗":           "#10A674",
+    "Casamento 💍":       "#63002E",
+    "Moradia 🏠":         "#0068DF",
+    "Outros 📦":          "#D0D0D0",
+    "Pessoal 👤":         "#8B46E5",
+    "Presentes 🎁":       "#C94690",
+    "Ratos 🐀":           "#DB81C7",
+    "Saúde ⚕️":           "#6EF4C8",
+    "Taxas 📉":           "#EF4444",
+    "Transporte 🚗":      "#007E54",
+    "Viagem ✈️":          "#34A7FF",
+    "Pgto. de fatura 💳": "#3B3B3B",
 }
+
+INSTALLMENT_RE = re.compile(r"\((\d+)\s*/\s*(\d+)\)\s*$")

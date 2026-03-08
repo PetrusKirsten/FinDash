@@ -74,6 +74,7 @@ def list_transactions(
     owner: Optional[str] = None,
     account_id: Optional[int] = None,
 ) -> pd.DataFrame:
+    
     with get_session() as session:
         q = (
             select(Transaction, Account, Category)
@@ -123,4 +124,5 @@ def current_balance_for_account(account_id: int) -> float:
             return 0.0
         rows = session.exec(select(Transaction.amount).where(Transaction.account_id == account_id)).all()
         tx_sum = sum(rows) if rows else 0.0
+        
         return float(acc.initial_balance + tx_sum)
