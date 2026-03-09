@@ -67,7 +67,7 @@ def fmt_brl(x: float) -> str:
 
 def fmt_month(d: date) -> str:
     meses_pt = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
-    return f"{meses_pt[d.month - 1]} / {d.year}"
+    return f"{meses_pt[d.month - 1]}, {d.year}"
 
 
 def fmt_owner(k: str) -> str:
@@ -104,7 +104,7 @@ def fmt_df(
     return out
 
 
-def config_2dp(df: pd.DataFrame) -> dict:
+def fmt_2dp(df: pd.DataFrame) -> dict:
     """Gera `column_config` com 2 casas decimais para colunas numéricas."""
     cfg: dict[str, st.column_config.NumberColumn] = {}
     for col in df.columns:
@@ -115,7 +115,7 @@ def config_2dp(df: pd.DataFrame) -> dict:
 
 def print_df(df: pd.DataFrame, **kwargs) -> None:
     """Wrapper de `st.dataframe` com padronização de colunas numéricas."""
-    st.dataframe(df, column_config=config_2dp(df), **kwargs)
+    st.dataframe(df, column_config=fmt_2dp(df), **kwargs)
 
 
 # ------------------------------
@@ -260,7 +260,7 @@ def parse_installment(description: str) -> dict | None:
     }
 
 
-def build_active_installments_df(tx_df: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
+def get_active_installments(tx_df: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
     if tx_df.empty or "description" not in tx_df.columns:
         return pd.DataFrame()
 
@@ -319,77 +319,118 @@ def build_active_installments_df(tx_df: pd.DataFrame, as_of: date | None = None)
     
     return latest
 
+
 # -------------------------------------------- 
 # ----- Funções auxiliares para os plots -----
 # --------------------------------------------
 
-def plot_accounts(
-    df: pd.DataFrame,
-    name_col: str = "account",
-    value_col: str = "balance",
-    title: str = "",
+def plot_values(
+    df:          pd.DataFrame,
+    name_col:    str,
+    value_col:   str,
+    mode:        str = "pie",             # "pie" ou "bar"
+    value_label: str = "Valor",           # "Saldo", "Fatura", etc.
+    colors:      list[str] | None = None,
+    sort_by:     str = "name_asc",      # "value_desc", "value_asc", "name_asc"
 ):
-
+    
     if df.empty:
         st.info("Sem dados para exibir.")
         return
 
     plot_df = df.copy()
     plot_df = plot_df[plot_df[value_col] != 0]
-    plot_df = plot_df.sort_values(value_col, ascending=False)
 
     if plot_df.empty:
-        st.info("Todas as contas estão com saldo zerado.")
+        st.info("Todos os valores estão zerados.")
         return
+
+    if colors is None:
+        colors = [
+            "#4F46E5",
+            "#06B6D4",
+            "#10B981",
+            "#F59E0B",
+            "#EF4444",
+            "#8B5CF6",
+        ]
+
+    # ordenação
+    if sort_by == "value_desc":
+        plot_df = plot_df.sort_values(by=value_col, ascending=False)
+    elif sort_by == "value_asc":
+        plot_df = plot_df.sort_values(by=value_col, ascending=True)
+    elif sort_by == "name_asc":
+        plot_df = plot_df.sort_values(by=name_col, ascending=True)
 
     total = plot_df[value_col].sum()
 
-    COLORS = [
-        "#FEC937",  # BB| Mel 
-        "#B02C2C",  # Santander | PP
+    if mode == "pie":
+        fig = px.pie(
+            plot_df,
+            names=name_col,
+            values=value_col,
+            hole=0.60,
+            color=name_col,
+            color_discrete_sequence=colors,
+            category_orders={name_col: plot_df[name_col].tolist()},
+        )
 
+        fig.update_traces(
+            sort=False,
+            texttemplate="R$ %{value:.2f}",
+            textposition="inside",
+            hovertemplate=f"<b>%{{label}}</b><br>{value_label}: R$ %{{value:.2f}}<extra></extra>",
+        )
 
-        "#EF4444",
-        "#F59E0B",
-        "#10B981",
-        "#06B6D4",
-        "#8B5CF6",
-        "#4F46E5",
-    ]
+        fig.add_annotation(
+            text=f"<b>{fmt_brl(total)}</b>",
+            showarrow=False,
+            font=dict(size=24),
+            x=0.5,
+            y=0.5,
+        )
 
-    fig = px.pie(
-        plot_df,
-        names  = name_col,
-        values = value_col,
-        hole   = 0.60,
-        color_discrete_sequence=COLORS,
-    )
+        fig.update_layout(
+            title=title,
+            height=300,
+            width=500,
+            margin=dict(t=0, b=20, l=0, r=0),
+            showlegend=True,
+        )
 
-    #  Mostrar valores absolutos
-    fig.update_traces(
-        texttemplate="R$ %{value:.2f}",
-        textposition="inside",
-        hovertemplate="<b>%{label}</b><br>Saldo: R$ %{value:.2f}<extra></extra>",
-    )
+    elif mode == "bar":
+        fig = px.bar(
+            plot_df,
+            x=value_col,
+            y=name_col,
+            orientation="h",
+            text=value_col,
+            color=name_col,
+            color_discrete_sequence=colors,
+            category_orders={name_col: plot_df[name_col].tolist()},
+        )
 
-    #  Total no centro do donut
-    fig.add_annotation(
-        text=f"<b>{fmt_brl(total)}</b>",
-        showarrow=False,
-        font=dict(size=24),
-        x=0.5,
-        y=0.5
-    )
+        fig.update_traces(
+            texttemplate="R$ %{x:.2f}",
+            textposition="outside",
+            hovertemplate=f"<b>%{{y}}</b><br>{value_label}: R$ %{{x:.2f}}<extra></extra>",
+            cliponaxis=False,
+        )
 
-    fig.update_layout(
-        title      = title,
-        height     = 300,
-        width      = 500,
-        margin     = dict(t=0, b=20, l=0, r=0),
-        showlegend = True,
-    )
+        fig.update_layout(
+            height=160,
+            margin=dict(t=0, b=50, l=5, r=100),
+            showlegend=False,
+            xaxis_title=None,
+            yaxis_title=None,
+        )
 
-    st.plotly_chart(fig, width='content')
+    else:
+        st.error("Modo de gráfico inválido. Use 'pie' ou 'bar'.")
+        return
+
+    st.plotly_chart(fig, width="content")
 
 
 def plot_credit(
@@ -521,8 +562,10 @@ def plot_categories(
 
 def page_dashboard(today: date) -> None:
     """Página inicial: visão consolidada de caixa + cartões de crédito."""
-
-    # Bloco 1: caixa (contas não-crédito).
+    
+    # =================================
+    # Bloco 1: Caixa (contas corrente)
+    # =================================
     st.subheader("Caixa")
 
     # st.metric("Saldo total", brl(cash_total_balance(as_of=today)))
@@ -531,11 +574,16 @@ def page_dashboard(today: date) -> None:
     # Gráfico dos saldos por conta
     bal_df = balances_by_account(include_credit=False, as_of=today)
     if not bal_df.empty:
-        plot_accounts(
+        plot_values(
             bal_df[["account", "balance"]],
             name_col="account",
             value_col="balance",
-            # title="Distribuição do saldo por conta",
+            mode="bar",   # ou "pie"
+            value_label="Saldo",
+            colors=[
+                "#FEC937",  # BB | Mel
+                "#B02C2C",  # Santander | PP
+            ],
         )
     else:
         st.info("Nenhuma conta de caixa encontrada (conta corrente/poupança).")
@@ -624,7 +672,6 @@ def page_dashboard(today: date) -> None:
     # ==========================================
     st.divider()  # Bloco 2: cartões de crédito
     # ==========================================
-
     st.subheader("Cartões de crédito")
 
     if "cc_cycle_offset" not in st.session_state:
@@ -680,10 +727,16 @@ def page_dashboard(today: date) -> None:
     # st.metric("Total", brl(total_fatura))
 
     if not credit_ui.empty:
-        plot_credit(
+        plot_values(
             credit_ui,
             name_col="cartão",
             value_col="fatura",
+            mode="bar",   # ou "pie"
+            value_label="Fatura",
+            colors=[
+                "#4F46E5",  # Porto Bank
+                "#B02C2C",  # Santander Elite
+            ],
         )
 
     with st.expander("Faturas"):
@@ -714,7 +767,7 @@ def page_dashboard(today: date) -> None:
 
     with st.expander("Parcelamentos ativos"):
         tx_all = list_transactions(owner="todos")
-        active_installments = build_active_installments_df(tx_all, as_of=today)
+        active_installments = get_active_installments(tx_all, as_of=today)
 
         if active_installments.empty:
             st.info("Nenhum parcelamento ativo encontrado.")
