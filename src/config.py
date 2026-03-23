@@ -55,17 +55,17 @@ SPLIT_LABELS = {
 }
 
 CATEGORY_COLORS = {
-    "Alimentação 🍽️":     "#DB7629",
-    "Carro 🚗":           "#10A674",
-    "Casamento 💍":       "#63002E",
+    "Alimentação 🍽️":     "#FF8A30",
+    "Carro 🚗":           "#9F593D",
+    "Casamento 💍":       "#880040",
     "Moradia 🏠":         "#0068DF",
     "Outros 📦":          "#D0D0D0",
     "Pessoal 👤":         "#8B46E5",
-    "Presentes 🎁":       "#C94690",
-    "Ratos 🐀":           "#DB81C7",
+    "Presentes 🎁":       "#FF0090",
+    "Ratos 🐀":           "#FFA8EC",
     "Saúde ⚕️":           "#6EF4C8",
     "Taxas 📉":           "#EF4444",
-    "Transporte 🚗":      "#007E54",
+    "Transporte 🚗":      "#0BA16F",
     "Viagem ✈️":          "#34A7FF",
     "Pgto. de fatura 💳": "#3B3B3B",
 }

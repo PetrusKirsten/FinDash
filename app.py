@@ -260,6 +260,19 @@ def parse_installment(description: str) -> dict | None:
     }
 
 
+def installment_next_date(d: date, months_ahead: int) -> date:
+    """
+    Para parcelamentos:
+    - 0 meses à frente -> mantém a data original
+    - 1+ meses à frente -> fixa no dia 4 do mês correspondente
+    """
+    if months_ahead == 0:
+        return d
+
+    target = add_months(d, months_ahead)
+    return date(target.year, target.month, 4)
+
+
 def get_active_installments(tx_df: pd.DataFrame, as_of: date | None = None) -> pd.DataFrame:
     if tx_df.empty or "description" not in tx_df.columns:
         return pd.DataFrame()
@@ -871,14 +884,13 @@ def form_new_transaction(accs: list, cats: list) -> None:
 
     p1, p2, p3 = st.columns(3)
     with p1:
-        is_installment = st.checkbox("Parcelado?", value=False, key="new_is_installment")
+        is_installment = st.checkbox("Parcelado?", key="new_is_installment")
     
     with p2:
         total_installments = st.number_input(
             "Total de parcelas",
             min_value=1,
             step=1,
-            value=1,
             disabled=not is_installment,
             key="new_total_installments",
         )
@@ -888,7 +900,6 @@ def form_new_transaction(accs: list, cats: list) -> None:
             "Parcela atual",
             min_value=1,
             step=1,
-            value=1,
             disabled=not is_installment,
             key="new_current_installment",
         )
@@ -1020,11 +1031,16 @@ def form_new_transaction(accs: list, cats: list) -> None:
         st.success("Transação salva!")
     else:
         # Fluxo B: parcelado, gerando uma transação por mês.
+        # Regra:
+        # - parcela atual fica na data real informada no formulário
+        # - parcelas futuras ficam no dia 4 dos meses seguintes
         created = 0
+        desc_i = (description.strip() or "").rstrip()
+
         for parcela in range(n_current, n_total + 1):
-            dtx = add_months(base_date, parcela - n_current)
+            months_ahead = parcela - n_current
+            dtx = installment_next_date(dt, months_ahead)
             suffix = f" ({parcela}/{n_total})"
-            desc_i = (description.strip() or "").rstrip()
 
             create_transaction(
                 dt=dtx,
